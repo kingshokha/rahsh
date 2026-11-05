@@ -86,8 +86,7 @@
   @media (min-width:960px){.grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}}
   .card{display:flex;flex-direction:column;background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line)}
   .card-img{position:relative;display:block;aspect-ratio:3/4;background:var(--surface-2);overflow:hidden}
-  .card-img img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s}
-  .card:hover .card-img img{transform:scale(1.03)}
+  .card-img img{width:100%;height:100%;object-fit:contain;display:block} /* фото целиком, без обрезки */
   .noimg{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
   .sale-tag{position:absolute;left:8px;top:8px;background:var(--sale);color:#fff;font-weight:700;font-size:12.5px;padding:3px 8px;border-radius:8px}
   .card-body{display:flex;flex-direction:column;gap:6px;padding:10px 12px 12px;flex:1}
@@ -118,7 +117,7 @@
   .gallery{display:grid;gap:10px}
   .slides{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;border-radius:var(--radius);background:var(--surface-2);scrollbar-width:none;aspect-ratio:3/4}
   .slides::-webkit-scrollbar{display:none}
-  .slides img,.slides .noimg{flex:none;width:100%;height:100%;object-fit:cover;scroll-snap-align:start}
+  .slides img,.slides .noimg{flex:none;width:100%;height:100%;object-fit:contain;scroll-snap-align:start}
   .dots{display:flex;justify-content:center;gap:6px}
   .dots i{width:7px;height:7px;border-radius:50%;background:var(--line)}
   .dots i.on{background:var(--text)}
