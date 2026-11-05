@@ -275,7 +275,7 @@
 const S = {
   demo: false,
   loaded: false,
-  shop: { name: 'Рахш', tagline: '', currency: '₽', delivery: ['Доставка курьером', 'Самовывоз'] },
+  shop: { name: 'Рахш', tagline: '', currency: 'с', delivery: ['Доставка курьером', 'Самовывоз'] },
   categories: [], products: [],
   cat: '', q: '', sort: 'new',
   cart: {},
@@ -1060,7 +1060,7 @@ const demoApi = (() => {
   const files = {};
   let seq = 1000, fid = 0;
   const wait = ms => new Promise(r => setTimeout(r, ms));
-  const shop = { name: 'Рахш', tagline: 'Доставка и самовывоз', currency: '₽', delivery: ['Доставка курьером', 'Самовывоз'] };
+  const shop = { name: 'Рахш', tagline: 'Доставка и самовывоз', currency: 'с', delivery: ['Доставка курьером', 'Самовывоз'] };
   return async (action, p) => {
     await wait(150);
     switch (action) {

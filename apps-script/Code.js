@@ -15,7 +15,7 @@
 const CONFIG = {
   SHOP_NAME: 'Рахш',                        // название магазина в шапке сайта
   SHOP_TAGLINE: 'Доставка и самовывоз',     // подпись под названием (можно пустую)
-  CURRENCY: '₽',
+  CURRENCY: 'с',                            // сомони
   MAX_PHOTOS: 10,
   NOTIFY_EMAIL: '',                         // куда слать письма о заказах; пусто — на почту владельца
   DELIVERY_OPTIONS: ['Доставка курьером', 'Самовывоз'],
@@ -30,8 +30,9 @@ const CONFIG = {
   ],
 };
 
-const HEADERS = ['ID', 'Добавлен', 'Фото', 'Название', 'Категория', 'Цена', 'Старая цена', 'Артикул', 'Описание', 'На витрине', 'Ссылки на фото', 'ID файлов'];
-const COL = { ID: 1, DATE: 2, PHOTO: 3, NAME: 4, CATEGORY: 5, PRICE: 6, OLD_PRICE: 7, SKU: 8, DESC: 9, VISIBLE: 10, URLS: 11, FILE_IDS: 12 };
+const HEADERS = ['ID', 'Добавлен', 'Изменён', 'Фото', 'Название', 'Категория', 'Цена', 'Старая цена', 'Артикул', 'Описание', 'На витрине', 'Ссылки на фото', 'ID файлов'];
+const COL = { ID: 1, DATE: 2, UPDATED: 3, PHOTO: 4, NAME: 5, CATEGORY: 6, PRICE: 7, OLD_PRICE: 8, SKU: 9, DESC: 10, VISIBLE: 11, URLS: 12, FILE_IDS: 13 };
+const MONEY_FORMAT = '#,##0.00 "' + CONFIG.CURRENCY + '"';
 const TEXT_COLS = [COL.NAME, COL.CATEGORY, COL.SKU, COL.DESC];
 
 const ORDER_HEADERS = ['Номер', 'Дата', 'Статус', 'Имя', 'Телефон', 'Получение', 'Адрес', 'Комментарий', 'Состав заказа', 'Товаров, шт', 'Сумма'];
@@ -298,6 +299,7 @@ function saveProduct_(p) {
   const record = [
     id,
     created,
+    new Date(),
     urls.length ? '=IMAGE("' + photoUrl_(photoIds[0], 400) + '")' : '',
     name,
     category,
@@ -314,8 +316,8 @@ function saveProduct_(p) {
   if (row) {
     sh.getRange(row, 1, 1, toWrite.length).setValues([toWrite]);
   } else {
-    sh.appendRow(toWrite);
-    row = sh.getLastRow();
+    row = nextProductRow_(sh);
+    sh.getRange(row, 1, 1, toWrite.length).setValues([toWrite]);
   }
   sh.setRowHeight(row, 90);
 
@@ -458,21 +460,42 @@ function getProductsSheet_() {
   if (sh.getLastRow() === 0) {
     styleHeader_(sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]));
     sh.setFrozenRows(1);
-    sh.getRange('B2:B').setNumberFormat('dd.mm.yyyy hh:mm');
-    sh.getRange('F2:G').setNumberFormat('#,##0.00');
-    sh.getRange('I2:I').setWrap(true);
-    sh.getRange('K2:K').setWrap(true);
-    sh.getRange('J2:J').insertCheckboxes();
-    sh.getRange('A:L').setVerticalAlignment('middle');
-    [90, 125, 100, 220, 150, 100, 100, 110, 280, 90, 220, 80].forEach((w, i) => sh.setColumnWidth(i + 1, w));
+    sh.getRange('B2:C').setNumberFormat('dd.mm.yyyy hh:mm');
+    sh.getRange('G2:H').setNumberFormat(MONEY_FORMAT);
+    sh.getRange('J2:J').setWrap(true);
+    sh.getRange('L2:L').setWrap(true);
+    sh.getRange('K2:K').insertCheckboxes();
+    sh.getRange('A:M').setVerticalAlignment('middle');
+    [90, 125, 125, 100, 220, 150, 100, 100, 110, 280, 90, 220, 80].forEach((w, i) => sh.setColumnWidth(i + 1, w));
     const rule = SpreadsheetApp.newDataValidation()
       .requireValueInRange(getCategoriesSheet_().getRange('A2:A'), true)
       .setAllowInvalid(true)
       .build();
-    sh.getRange('E2:E').setDataValidation(rule);
+    sh.getRange('F2:F').setDataValidation(rule);
     sh.hideColumns(COL.FILE_IDS);
+  } else if (sh.getRange(1, COL.UPDATED).getValue() !== HEADERS[COL.UPDATED - 1]) {
+    upgradeSheets_(sh);
   }
   return sh;
+}
+
+/** Лист из старой версии: добавляет колонку «Изменён» после «Добавлен» и ставит цены в сомони. Данные не трогает. */
+function upgradeSheets_(sh) {
+  const lock = LockService.getScriptLock();
+  const held = lock.hasLock(); // вызов изнутри withLock_
+  if (!held && !lock.tryLock(30000)) throw new Error('Сервер занят, попробуйте ещё раз');
+  try {
+    if (sh.getRange(1, COL.UPDATED).getValue() === HEADERS[COL.UPDATED - 1]) return; // уже обновил другой запрос
+    sh.insertColumnAfter(COL.DATE);
+    styleHeader_(sh.getRange(1, COL.UPDATED).setValue(HEADERS[COL.UPDATED - 1]));
+    sh.getRange(2, COL.UPDATED, sh.getMaxRows() - 1, 1).setNumberFormat('dd.mm.yyyy hh:mm');
+    sh.setColumnWidth(COL.UPDATED, 125);
+    sh.getRange(2, COL.PRICE, sh.getMaxRows() - 1, 2).setNumberFormat(MONEY_FORMAT);
+    getOrdersSheet_().getRange('K2:K').setNumberFormat(MONEY_FORMAT);
+    SpreadsheetApp.flush();
+  } finally {
+    if (!held) lock.releaseLock();
+  }
 }
 
 function getCategoriesSheet_() {
@@ -496,7 +519,7 @@ function getOrdersSheet_() {
     styleHeader_(sh.getRange(1, 1, 1, ORDER_HEADERS.length).setValues([ORDER_HEADERS]));
     sh.setFrozenRows(1);
     sh.getRange('B2:B').setNumberFormat('dd.mm.yyyy hh:mm');
-    sh.getRange('K2:K').setNumberFormat('#,##0.00');
+    sh.getRange('K2:K').setNumberFormat(MONEY_FORMAT);
     sh.getRange('G2:I').setWrap(true);
     sh.getRange('A:K').setVerticalAlignment('top');
     [70, 125, 100, 150, 130, 140, 220, 200, 320, 90, 100].forEach((w, i) => sh.setColumnWidth(i + 1, w));
@@ -541,6 +564,21 @@ function findRow_(sh, id) {
     if (String(ids[i][0]).trim() === String(id).trim()) return i + 2;
   }
   return 0;
+}
+
+/**
+ * Строка сразу под последним товаром. appendRow/getLastRow тут не годятся:
+ * флажки «На витрине» стоят до конца листа, и лист всегда выглядит заполненным.
+ */
+function nextProductRow_(sh) {
+  const max = sh.getMaxRows();
+  const ids = sh.getRange(1, COL.ID, max, 1).getDisplayValues();
+  let last = 1;
+  for (let i = ids.length - 1; i > 0; i--) {
+    if (String(ids[i][0]).trim()) { last = i + 1; break; }
+  }
+  if (last >= max) sh.insertRowsAfter(max, 1);
+  return last + 1;
 }
 
 function photoUrl_(id, size) {
