@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Шайдон 3D</title>
+<meta name="description" content="Photorealistic 3D model of Shaydon (Ashti district, Sughd, Tajikistan) built from real elevation, aerial imagery, OpenStreetMap and ML building footprints.">
+<style>
+  :root {
+    --bg: #0d1013;
+    --panel: rgba(16, 20, 24, 0.62);
+    --panel-border: rgba(255, 255, 255, 0.10);
+    --text: #eef1f3;
+    --muted: #a7b0b8;
+    --accent: #e9b44c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14px/1.4 "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; outline: none; }
+  .panel { position: absolute; background: var(--panel); border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px) saturate(1.3); -webkit-backdrop-filter: blur(14px) saturate(1.3);
+    border-radius: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+  #title { top: 16px; left: 16px; padding: 14px 18px 12px; max-width: calc(100vw - 32px); }
+  #title h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: .2px; }
+  #title h1 span { color: var(--muted); font-weight: 450; font-size: 15px; margin-left: 6px; }
+  #title p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
+  #views { top: 16px; right: 16px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+  #views button, #toggles button { all: unset; cursor: pointer; padding: 7px 12px; border-radius: 9px;
+    color: var(--text); font-size: 13px; white-space: nowrap; }
+  #views button:hover, #toggles button:hover { background: rgba(255,255,255,.08); }
+  #views button.active { background: rgba(233,180,76,.18); color: var(--accent); }
+  #bottom { left: 16px; bottom: 16px; padding: 10px 14px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    max-width: calc(100vw - 32px); }
+  #bottom label { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  #time { width: 170px; accent-color: var(--accent); }
+  #timeval { color: var(--text); font-variant-numeric: tabular-nums; min-width: 38px; }
+  #toggles { display: flex; gap: 2px; }
+  #toggles button { padding: 5px 9px; font-size: 12px; color: var(--muted); }
+  #toggles button.on { color: var(--text); background: rgba(255,255,255,.08); }
+  #compass { right: 16px; bottom: 50px; width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
+  #compass svg { width: 40px; height: 40px; transition: transform .05s linear; }
+  #attrib { position: absolute; right: 10px; bottom: 6px; font-size: 10.5px; color: rgba(255,255,255,.72);
+    text-shadow: 0 1px 2px rgba(0,0,0,.8); text-align: right; max-width: 70vw; pointer-events: none; }
+  #loader { position: absolute; inset: 0; display: grid; place-items: center; background: var(--bg); transition: opacity .8s; z-index: 10; }
+  #loader.done { opacity: 0; pointer-events: none; }
+  #loader .box { width: min(360px, 80vw); text-align: center; }
+  #loader h2 { font-weight: 600; margin: 0 0 4px; font-size: 26px; }
+  #loader p { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+  #bar { height: 3px; background: rgba(255,255,255,.1); border-radius: 2px; overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+  #status { margin-top: 10px; color: var(--muted); font-size: 12px; min-height: 16px; }
+  #tiles { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); padding: 6px 12px; font-size: 12px; color: var(--muted);
+    transition: opacity .6s; }
+  #tiles.hidden { opacity: 0; }
+  .label { color: #fff; font-size: 12.5px; font-weight: 600; padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+    background: rgba(12,14,16,.55); border: 1px solid rgba(255,255,255,.15); backdrop-filter: blur(6px);
+    transform: translateY(-14px); pointer-events: none; }
+  .label.town { font-size: 16px; padding: 4px 11px; }
+  .label small { color: var(--muted); font-weight: 450; margin-left: 4px; }
+  #help { position: absolute; left: 50%; bottom: 74px; transform: translateX(-50%); font-size: 12px; color: rgba(255,255,255,.75);
+    text-shadow: 0 1px 2px rgba(0,0,0,.8); pointer-events: none; transition: opacity 1s; }
+  @media (max-width: 720px) {
+    #title { padding: 10px 12px; } #title h1 { font-size: 18px; } #title p { display: none; }
+    #views { top: auto; bottom: 120px; flex-direction: row; flex-wrap: wrap; max-width: calc(100vw - 32px); }
+    #time { width: 110px; } #help { display: none; } #compass { bottom: 190px; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="title" class="panel">
+  <h1>Шайдон<span>Shaydon</span></h1>
+  <p>Ноҳияи Ашт, вилояти Суғд · 40.666° N, 70.359° E · 650–1220 m</p>
+</div>
+
+<div id="views" class="panel">
+  <button data-view="overview" class="active">Обзор</button>
+  <button data-view="centre">Центр</button>
+  <button data-view="street">Улица</button>
+  <button data-view="gorge">Ущелье Ашт</button>
+  <button data-view="fan">Конус выноса</button>
+  <button data-view="valley">Ферганская долина</button>
+</div>
+
+<div id="bottom" class="panel">
+  <label>Время <input id="time" type="range" min="5.5" max="20" step="0.05" value="15.5"><span id="timeval">15:30</span></label>
+  <div id="toggles">
+    <button data-toggle="buildings" class="on">Здания</button>
+    <button data-toggle="trees" class="on">Деревья</button>
+    <button data-toggle="labels" class="on">Подписи</button>
+    <button data-toggle="ao" class="on">AO</button>
+  </div>
+</div>
+
+<div id="compass" class="panel" title="Север">
+  <svg viewBox="-20 -20 40 40"><path d="M0-16 5 0H-5Z" fill="#e5533d"/><path d="M0 16 5 0H-5Z" fill="#dfe3e6"/><circle r="2" fill="#222"/></svg>
+</div>
+
+<div id="tiles" class="panel hidden"></div>
+<div id="help">Левая кнопка — перемещение · правая — вращение · колесо — масштаб · двойной клик — перелёт</div>
+<div id="attrib"></div>
+
+<div id="loader"><div class="box">
+  <h2>Шайдон</h2>
+  <p>Рельеф, улицы, здания и деревья по реальным данным</p>
+  <div id="bar"><i></i></div>
+  <div id="status">Загрузка…</div>
+</div></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
