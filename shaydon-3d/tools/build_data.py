@@ -88,6 +88,7 @@ def build_terrain(dem_z, bbox, spacing, name, smooth):
     gx, gy = np.meshgrid(xs, ys)
     px, py = local_to_pixel(gx, gy, dem_z, tx0, ty0)
     h = bilinear(dem, px, py).astype(np.float32)
+    h = np.maximum(h, np.percentile(h, 1.0) - 5)        # drop DEM voids / spikes
     if smooth:
         h = cv2.GaussianBlur(h, (0, 0), smooth)
     v = h + 32768.0
@@ -275,6 +276,19 @@ def rect_from(poly_xy):
 
 
 def detect_extra_roofs(mosaic, footprint_mask, road_mask, town_mask):
+    def one(m, fm, rm, tm):
+        boxes = _extra_roofs(m, fm, rm, tm)
+        return [[*b.mean(0), *b.ravel()] for b in boxes]
+    one.cols = 10
+    res = tiled(one, [mosaic, footprint_mask, road_mask, town_mask])
+    out = []
+    for row in res:
+        box = row[2:].reshape(4, 2) + (row[:2] - row[2:].reshape(4, 2).mean(0))
+        out.append(box.astype(np.float32))
+    return out
+
+
+def _extra_roofs(mosaic, footprint_mask, road_mask, town_mask):
     """Colour/contrast roof detection to fill gaps in the ML footprint dataset."""
     lab = cv2.cvtColor(mosaic, cv2.COLOR_BGR2LAB).astype(np.float32)
     L, A, B = lab[..., 0], lab[..., 1] - 128, lab[..., 2] - 128
@@ -391,7 +405,27 @@ def build_buildings(mosaic, tx0, ty0, roads, landuse):
 
 
 # --------------------------------------------------------------------------- trees
-def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water, forests=()):
+def tiled(fn, arrays, size=4096, pad=48):
+    """Run fn on overlapping tiles of large rasters to bound memory.  fn returns
+    an (N, >=2) array whose first two columns are x, y pixel coordinates inside
+    the tile; results are kept only in each tile's core and offset back."""
+    h, w = arrays[0].shape[:2]
+    out = []
+    for y0 in range(0, h, size):
+        for x0 in range(0, w, size):
+            a, b = max(0, x0 - pad), max(0, y0 - pad)
+            sub = [arr[b:min(h, y0 + size + pad), a:min(w, x0 + size + pad)] for arr in arrays]
+            res = np.asarray(fn(*sub), dtype=np.float64).reshape(-1, fn.cols)
+            if not len(res):
+                continue
+            res[:, 0] += a
+            res[:, 1] += b
+            keep = (res[:, 0] >= x0) & (res[:, 0] < x0 + size) & (res[:, 1] >= y0) & (res[:, 1] < y0 + size)
+            out.append(res[keep])
+    return np.concatenate(out) if out else np.zeros((0, fn.cols))
+
+
+def _tree_peaks(mosaic, fmask, rmask):
     f = mosaic.astype(np.float32)
     b, g, r = f[..., 0], f[..., 1], f[..., 2]
     L = cv2.cvtColor(mosaic, cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)
@@ -408,7 +442,20 @@ def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water, forests=()):
     mx = cv2.dilate(sm, np.ones((7, 7), np.uint8))
     peak = (sm >= mx - 1e-6) & (sm > 1.9) & (L < 105)
     ys, xs = np.nonzero(peak)
-    rad = np.clip(dt[ys, xs] * PX, 1.5, 6.5)
+    return np.stack([xs, ys, dt[ys, xs]], 1) if len(xs) else np.zeros((0, 3))
+
+
+_tree_peaks.cols = 3
+
+
+def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water, forests=()):
+    pk = tiled(_tree_peaks, [mosaic, fmask, rmask])
+    max_trees = _CFG.get("max_trees", 0)
+    if max_trees and len(pk) > max_trees:
+        pk = pk[np.random.default_rng(3).choice(len(pk), max_trees, replace=False)]
+    xs, ys, dtv = pk[:, 0].astype(int), pk[:, 1].astype(int), pk[:, 2]
+    dt = None
+    rad = np.clip(dtv * PX, 1.5, 6.5)
 
     n = 2 ** 17 * 256
     mxm = ((xs + 0.5 + tx0 * 256) / n - 0.5) * 2 * math.pi * R

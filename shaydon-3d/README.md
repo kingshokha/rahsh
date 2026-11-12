@@ -1,4 +1,4 @@
-# 3D models of Shaydon and Khujand
+# 3D models of Shaydon, Khujand and Barnaul
 
 An interactive, browser-based 3D model of **Shaydon** (Шайдон), the district
 centre of Ashti district, Sughd region, Tajikistan (40.666° N, 70.359° E). The
@@ -15,6 +15,12 @@ regional capital on the Syr Darya: 65,518 buildings (≈17k from OpenStreetMap,
 the rest Microsoft ML footprints), 135,300 trees, the river as water polygons,
 Soviet-era apartment blocks and the Mogoltau mountains. Open it with
 `index.html?city=khujand`.
+
+**Barnaul** (Барнаул, Altai Krai, Russia) covers the centre from Lenin Avenue to
+the Ob: 73,178 buildings with OSM floor counts for ≈6,000 of them, 220,000 trees
+with a Siberian species mix (Scots pine in the ribbon pine forest, birch,
+poplar, spruce) chosen from OSM forest types, and the Ob with its channels.
+Open it with `index.html?city=barnaul`.
 
 Everything is placed from real map data, nothing is hand-placed:
 
@@ -47,7 +53,7 @@ from jsDelivr and the imagery from Esri, so the browser needs internet access.
 Controls: left drag to pan, right drag to rotate, wheel to zoom, double-click to
 fly to a point. The buttons on the right jump to preset views; the slider sets
 the time of day (real sun position for Shaydon in June). URL parameters:
-`?city=shaydon|khujand`, `&view=<id>` (a preset view from `tools/cities.json`),
+`?city=shaydon|khujand|barnaul`, `&view=<id>` (a preset view from `tools/cities.json`),
 `&t=18.5` (hour), `&noao` (disable ambient occlusion on slow GPUs).
 
 ## Rebuilding the data
