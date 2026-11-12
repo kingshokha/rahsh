@@ -307,5 +307,38 @@
         }
       ]
     }
+  },
+  "barnaul": {
+    "origin": [
+      53.345,
+      83.75
+    ],
+    "city_bbox": [
+      83.66,
+      53.3,
+      83.84,
+      53.39
+    ],
+    "region_bbox": [
+      83.3,
+      53.08,
+      84.3,
+      53.62
+    ],
+    "centre": [
+      2000,
+      -500
+    ],
+    "profile": "city",
+    "viewer": {
+      "title": "Барнаул",
+      "subtitle": "Barnaul",
+      "info": "Алтайский край · 53.35° N, 83.78° E · на берегу Оби",
+      "poiLabels": false,
+      "buildingLabels": false,
+      "views": [],
+      "labels": []
+    },
+    "climate": "siberia"
   }
 }

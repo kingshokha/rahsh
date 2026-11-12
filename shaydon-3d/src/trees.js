@@ -20,7 +20,11 @@ function crownGeometry({ lumps, detail, y0, shape, seed }) {
     g = mergeVertices(g);
     const t = lumps === 1 ? 0.5 : i / (lumps - 1);
     let cx, cy, cz, r;
-    if (shape === 'column') {           // poplar: narrow spindle
+    if (shape === 'cone') {             // spruce: stacked tiers
+      cy = 0.06 + t * 0.86; r = (1 - t) * 0.95 + 0.12;
+      cx = (rnd() - 0.5) * 0.06; cz = (rnd() - 0.5) * 0.06;
+      g.scale(r, 0.2, r);
+    } else if (shape === 'column') {    // poplar: narrow spindle
       cy = 0.12 + t * 0.72; r = 0.55 + Math.sin(t * Math.PI) * 0.45;
       const a = rnd() * Math.PI * 2; cx = Math.cos(a) * 0.25; cz = Math.sin(a) * 0.25;
       g.scale(r, 0.22, r);
@@ -109,7 +113,10 @@ function cardGeometry({ count, y0, shape, seed, size }) {
     if (d.lengthSq() < 1e-4) d.set(0, 1, 0);
     d.normalize();
     const rad = 0.4 + 0.6 * Math.sqrt(rnd());
-    if (shape === 'column') {
+    if (shape === 'cone') {
+      const ty = rnd(), prof = (1 - ty) * 0.95 + 0.05;
+      c.set(d.x * rad * prof, y0 + ty * (1 - y0), d.z * rad * prof);
+    } else if (shape === 'column') {
       const ty = rnd(), prof = Math.sin(Math.min(1, ty * 1.15) * Math.PI) * 0.85 + 0.15;
       c.set(d.x * rad * prof, y0 + ty * (1 - y0), d.z * rad * prof);
     } else {
@@ -126,7 +133,7 @@ function cardGeometry({ count, y0, shape, seed, size }) {
     for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
       p.copy(c).addScaledVector(t1, a * s).addScaledVector(t2, b * s);
       pos.push(p.x, p.y, p.z);
-      sn.set(p.x, (p.y - cy) * (shape === 'column' ? 0.5 : 1.4), p.z).normalize();
+      sn.set(p.x, (p.y - cy) * (shape === 'column' || shape === 'cone' ? 0.5 : 1.4), p.z).normalize();
       nor.push(sn.x, sn.y, sn.z);
       uv.push(u0 + (a + 1) * 0.25, v0 + (b + 1) * 0.25);
       const h = THREE.MathUtils.clamp((p.y - y0) / (1 - y0), 0, 1);
@@ -200,6 +207,27 @@ export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1 } = {
       lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.3, shape: 'round', seed: 19 }),
       trunk: trunkGeometry(0.48, 0.06),
       colors: ['#384f22', '#30451e', '#425628'] },
+    // 3: Scots pine - tall bare trunk, crown bunched at the top
+    { cards: cardGeometry({ count: 60, y0: 0.6, shape: 'round', seed: 47, size: 0.32 }),
+      core: crownGeometry({ lumps: 3, detail: 1, y0: 0.64, shape: 'round', seed: 53 }),
+      hi: crownGeometry({ lumps: 6, detail: 2, y0: 0.6, shape: 'round', seed: 59 }),
+      lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.6, shape: 'round', seed: 61 }),
+      trunk: trunkGeometry(0.75, 0.05), bark: '#8a5a3c',
+      colors: ['#2b3d24', '#26381f', '#32452a', '#2d3f2a'] },
+    // 4: birch - white trunk, light airy crown
+    { cards: cardGeometry({ count: 56, y0: 0.3, shape: 'round', seed: 67, size: 0.3 }),
+      core: crownGeometry({ lumps: 2, detail: 1, y0: 0.36, shape: 'round', seed: 71 }),
+      hi: crownGeometry({ lumps: 6, detail: 2, y0: 0.3, shape: 'round', seed: 73 }),
+      lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.3, shape: 'round', seed: 79 }),
+      trunk: trunkGeometry(0.6, 0.045), bark: '#d9d5cc',
+      colors: ['#4f6a2c', '#5a7432', '#48632a', '#617b38'] },
+    // 5: spruce - dark cone
+    { cards: cardGeometry({ count: 70, y0: 0.08, shape: 'cone', seed: 83, size: 0.3 }),
+      core: crownGeometry({ lumps: 5, detail: 1, y0: 0.1, shape: 'cone', seed: 89 }),
+      hi: crownGeometry({ lumps: 8, detail: 2, y0: 0.06, shape: 'cone', seed: 97 }),
+      lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.1, shape: 'cone', seed: 101 }),
+      trunk: trunkGeometry(0.2, 0.06), bark: '#5b4636',
+      colors: ['#1f3324', '#233827', '#1c2f21'] },
   ];
   for (const k of kinds) { k.core.scale(0.62, 0.72, 0.62); k.core.translate(0, 0.12, 0); }
   const leafM = leafMaterial(uniforms);
@@ -207,6 +235,8 @@ export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1 } = {
   const cardM = leafMaterial(uniforms, leafTex);
   const cardDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leafTex, alphaTest: 0.42 });
   const barkM = new THREE.MeshStandardMaterial({ color: '#5a4c3e', roughness: 0.95 });
+  const barks = {};
+  const barkFor = (c) => (barks[c] ||= new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 }));
 
   // bucket per chunk & kind
   const buckets = new Map();
@@ -228,7 +258,7 @@ export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1 } = {
     const kind = kinds[k];
     const hi = new THREE.InstancedMesh(kind.hi, leafM, list.length);
     const lo = new THREE.InstancedMesh(kind.lo, leafM, list.length);
-    const tr = new THREE.InstancedMesh(kind.trunk, barkM, list.length);
+    const tr = new THREE.InstancedMesh(kind.trunk, kind.bark ? barkFor(kind.bark) : barkM, list.length);
     const cards = new THREE.InstancedMesh(kind.cards, cardM, list.length);
     const core = new THREE.InstancedMesh(kind.core, leafM, list.length);
     cards.customDepthMaterial = cardDepth;

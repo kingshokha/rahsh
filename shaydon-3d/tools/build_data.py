@@ -27,7 +27,9 @@ from geo import _CFG, CITY, CITY_BBOX, K, MX0, MY0, ORIGIN, R, REGION_BBOX, loca
 
 CACHE = sys.argv[1] if len(sys.argv) > 1 else "cache"
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "data", CITY)
-PROFILE = _CFG.get("profile", "town")       # "town": village-like, "city": apartment blocks
+PROFILE = _CFG.get("profile", "town")
+CLIMATE = _CFG.get("climate", "central_asia")   # tree species mix
+PX = 156543.03392 * math.cos(math.radians(ORIGIN[0])) / 2 ** 17   # metres per z17 pixel       # "town": village-like, "city": apartment blocks
 os.makedirs(OUT, exist_ok=True)
 
 
@@ -125,7 +127,7 @@ WATER_W = {"river": 8, "stream": 4, "canal": 3, "ditch": 1.2, "drain": 1.2}
 
 def load_osm():
     d = json.load(open(os.path.join(CACHE, "osm.json")))
-    roads, water, pois, landuse, lakes = [], [], [], [], []
+    roads, water, pois, landuse, lakes, forests = [], [], [], [], [], []
     for e in d["elements"]:
         t = e.get("tags", {})
         if e["type"] == "node":
@@ -134,7 +136,8 @@ def load_osm():
                 pois.append({"name": t.get("name", ""), "kind": t.get("amenity") or t.get("place"),
                              "x": round(x, 1), "y": round(y, 1)})
             continue
-        if e["type"] == "relation" and t.get("natural") == "water":
+        is_forest = t.get("landuse") == "forest" or t.get("natural") == "wood"
+        if e["type"] == "relation" and (t.get("natural") == "water" or is_forest):
             outer, inner = [], []
             for m in e.get("members", []):
                 if m.get("type") == "way" and "geometry" in m:
@@ -145,7 +148,10 @@ def load_osm():
                 shape = unary_union(polys)
                 for hole in polygonize(unary_union(inner)) if inner else []:
                     shape = shape.difference(hole)
-                lakes.append((t.get("name", ""), shape))
+                if is_forest:
+                    forests.append((t.get("leaf_type", ""), shape))
+                else:
+                    lakes.append((t.get("name", ""), shape))
             continue
         if e["type"] == "relation":
             if "name" in t and ("amenity" in t or "building" in t):
@@ -166,9 +172,11 @@ def load_osm():
                           "name": t.get("name", ""), "p": flat})
         elif t.get("natural") == "water" and len(pts) > 3 and pts[0] == pts[-1]:
             lakes.append((t.get("name", ""), Polygon(pts)))
+        elif is_forest and len(pts) > 3 and pts[0] == pts[-1]:
+            forests.append((t.get("leaf_type", ""), Polygon(pts)))
         elif "landuse" in t:
             landuse.append((t["landuse"], pts))
-    return roads, water, pois, landuse, lakes
+    return roads, water, pois, landuse, lakes, forests
 
 
 def water_polygons(lakes):
@@ -335,7 +343,7 @@ def build_buildings(mosaic, tx0, ty0, roads, landuse):
     rmask = np.zeros((h, w), np.uint8)
     for r in roads:
         p = to_px(np.array(r["p"]).reshape(-1, 2))
-        cv2.polylines(rmask, [p.round().astype(np.int32)], False, 1, max(2, int(r["w"] / 0.9) + 2))
+        cv2.polylines(rmask, [p.round().astype(np.int32)], False, 1, max(2, int(r["w"] / PX) + 2))
     tmask = np.zeros((h, w), np.uint8)
     for lu, pts in landuse:
         if lu == "residential":
@@ -383,7 +391,7 @@ def build_buildings(mosaic, tx0, ty0, roads, landuse):
 
 
 # --------------------------------------------------------------------------- trees
-def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water):
+def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water, forests=()):
     f = mosaic.astype(np.float32)
     b, g, r = f[..., 0], f[..., 1], f[..., 2]
     L = cv2.cvtColor(mosaic, cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)
@@ -400,7 +408,7 @@ def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water):
     mx = cv2.dilate(sm, np.ones((7, 7), np.uint8))
     peak = (sm >= mx - 1e-6) & (sm > 1.9) & (L < 105)
     ys, xs = np.nonzero(peak)
-    rad = np.clip(dt[ys, xs] * 0.9, 1.5, 6.5)               # pixel ~0.9 m
+    rad = np.clip(dt[ys, xs] * PX, 1.5, 6.5)
 
     n = 2 ** 17 * 256
     mxm = ((xs + 0.5 + tx0 * 256) / n - 0.5) * 2 * math.pi * R
@@ -424,6 +432,32 @@ def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water):
     hgt = np.where(kind == 1, 13 + rng.random(len(X)) * 9,
                    np.where(kind == 2, rad * 3.0 + 5, rad * 1.9 + 2.2 + rng.random(len(X)) * 2))
     rad = np.where(kind == 1, np.clip(rad * 0.6, 1.0, 2.0), rad)
+    if CLIMATE == "siberia":
+        # forest type from OSM: 1 needle-leaved (pine "bor"), 2 other forest
+        fmap = np.zeros_like(fmask)
+        for leaf, shape in forests:
+            for pg in getattr(shape, "geoms", [shape]):
+                if pg.geom_type != "Polygon":
+                    continue
+                pp = np.array(pg.exterior.coords)
+                px, py = local_to_pixel(pp[:, 0], pp[:, 1], 17, tx0, ty0)
+                cv2.fillPoly(fmap, [np.stack([px, py], 1).round().astype(np.int32)], 1 if leaf == "needleleaved" else 2)
+        f = fmap[ys, xs]
+        v = rng.random(len(X))
+        kind = np.zeros(len(X), np.uint8)                    # elm / maple / balsam poplar
+        kind[(f == 0) & (v < 0.32)] = 4                       # birch
+        kind[(f == 0) & (v >= 0.32) & (v < 0.42)] = 2         # big old poplars
+        kind[(f == 0) & (v >= 0.42) & (v < 0.47)] = 5         # spruce
+        kind[(f == 1) & (v < 0.85)] = 3                       # Scots pine
+        kind[(f == 1) & (v >= 0.85) & (v < 0.93)] = 4
+        kind[(f == 1) & (v >= 0.93)] = 5
+        kind[(f == 2) & (v < 0.45)] = 4
+        kind[(f == 2) & (v >= 0.45) & (v < 0.75)] = 3
+        r2 = rng.random(len(X))
+        rad = np.where(kind == 3, np.clip(rad * 0.85, 2.0, 4.5), np.where(kind == 5, np.clip(rad * 0.7, 1.5, 3.2), rad))
+        hgt = np.select([kind == 3, kind == 4, kind == 5, kind == 2],
+                        [18 + r2 * 9, rad * 2.4 + 7 + r2 * 4, 9 + r2 * 9, rad * 2.6 + 8],
+                        rad * 2.0 + 4 + r2 * 3)
 
     arr = np.zeros(len(X), dtype=[("x", "<f4"), ("y", "<f4"), ("r", "u1"), ("h", "u1"),
                                   ("k", "u1"), ("s", "u1")])
@@ -433,17 +467,17 @@ def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water):
     arr["k"] = kind
     arr["s"] = rng.integers(0, 256, len(X))
     arr.tofile(os.path.join(OUT, "trees.bin"))
-    print(f"trees: {len(X)} ({(kind == 1).sum()} poplars, {(kind == 2).sum()} plane trees)")
+    print(f"trees: {len(X)} by kind {np.bincount(kind, minlength=6).tolist()}")
     return len(X)
 
 
 if __name__ == "__main__":
     terrain_city = build_terrain(14, CITY_BBOX, 10.0, "terrain_city.png", smooth=1.3)
     terrain_region = build_terrain(11, REGION_BBOX, 60.0, "terrain_region.png", smooth=0.6)
-    roads, water, pois, landuse, lakes = load_osm()
+    roads, water, pois, landuse, lakes, forests = load_osm()
     mosaic, tx0, ty0 = load_mosaic()
     buildings, fmask, rmask = build_buildings(mosaic, tx0, ty0, roads, landuse)
-    ntrees = build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water)
+    ntrees = build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water, forests)
     city = {
         "meta": {
             "name": _CFG.get("viewer", {}).get("title", CITY),
