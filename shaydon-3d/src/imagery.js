@@ -5,6 +5,18 @@ import { localToTile } from './geo.js';
 const URL = (z, x, y) =>
   `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
 
+// Optional pre-baked imagery (data/imagery.json): used where the page cannot
+// reach Esri, e.g. inside a sandboxed artifact.  Keys: "z/tx0/ty0/nx/ny".
+let BAKED = null;
+export async function loadBakedManifest(url) {
+  try {
+    const r = await fetch(url);
+    if (r.ok) BAKED = await r.json();
+  } catch (e) { /* no manifest: stream from Esri */ }
+  return BAKED;
+}
+export const hasBaked = () => !!BAKED;
+
 export class TileLoader {
   constructor(concurrency = 12) {
     this.concurrency = concurrency;
@@ -79,15 +91,28 @@ export async function composeTexture(win, loader, renderer, priority = 0, maxSiz
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#9c8d74';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  const jobs = [];
-  for (let x = 0; x < win.nx; x++) {
-    for (let y = 0; y < win.ny; y++) {
-      jobs.push(loader.load(win.z, win.tx0 + x, win.ty0 + y, priority).then((bmp) => {
-        if (bmp) { ctx.drawImage(bmp, x * ts, y * ts, ts, ts); bmp.close?.(); }
-      }));
+  const key = `${win.z}/${win.tx0}/${win.ty0}/${win.nx}/${win.ny}`;
+  let ok = 0;
+  if (BAKED) {
+    if (!BAKED[key]) return null;
+    try {
+      const bmp = await createImageBitmap(await (await fetch(BAKED[key])).blob());
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      bmp.close?.();
+      ok = 1;
+    } catch (e) { return null; }
+  } else {
+    const jobs = [];
+    for (let x = 0; x < win.nx; x++) {
+      for (let y = 0; y < win.ny; y++) {
+        jobs.push(loader.load(win.z, win.tx0 + x, win.ty0 + y, priority).then((bmp) => {
+          if (bmp) { ctx.drawImage(bmp, x * ts, y * ts, ts, ts); bmp.close?.(); ok++; }
+        }));
+      }
     }
+    await Promise.all(jobs);
   }
-  await Promise.all(jobs);
+  if (!ok) return null; // keep whatever texture is already shown
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();

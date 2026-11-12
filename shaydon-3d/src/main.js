@@ -8,7 +8,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { initGeo, loadHeightField, makeHeightAt, ELEV0, world } from './geo.js';
-import { TileLoader } from './imagery.js';
+import { TileLoader, loadBakedManifest, hasBaked } from './imagery.js';
 import { Terrain } from './terrain.js';
 import { buildBuildings } from './buildings.js';
 import { buildTrees } from './trees.js';
@@ -29,7 +29,8 @@ function progress(msg) {
 // ------------------------------------------------------------------ renderer
 const app = $('#app');
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: params.has('capture') });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const isPhone = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, isPhone ? 1.5 : 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.62;
@@ -65,7 +66,7 @@ su.mieDirectionalG.value = 0.82;
 
 const sun = new THREE.DirectionalLight(0xffffff, 3.2);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.setScalar(isPhone ? 2048 : 4096);
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.6;
 const SH = 650;
@@ -134,7 +135,7 @@ gtao.updateGtaoMaterial({ radius: 6, distanceExponent: 1.4, thickness: 4, scale:
 gtao.blendIntensity = 0.85;
 composer.addPass(gtao);
 composer.addPass(new OutputPass());
-const lowPower = /Mobi|Android/i.test(navigator.userAgent);
+const lowPower = isPhone;
 gtao.enabled = !lowPower && !params.has('noao');
 
 addEventListener('resize', () => {
@@ -259,6 +260,7 @@ async function boot() {
   heightAt = makeHeightAt(cityHF, regionHF);
   progress('Поверхность…');
 
+  await loadBakedManifest('data/imagery.json');
   const loader = new TileLoader(14);
   terrain = new Terrain(scene, renderer, cityHF, regionHF, loader);
   terrain.build(4, 4);
@@ -310,6 +312,7 @@ async function boot() {
   const pill = $('#tiles');
   pill.classList.remove('hidden');
   loader.onProgress = (l) => { pill.textContent = `Детализация снимков ${l.done}/${l.requested}`; };
+  if (hasBaked()) pill.textContent = 'Детализация снимков…';
   const focus = () => ({ x: controls.target.x, y: -controls.target.z });
   const zoom = renderer.capabilities.maxTextureSize >= 4096 && !lowPower ? 17 : 16;
   await terrain.refine(focus, zoom);

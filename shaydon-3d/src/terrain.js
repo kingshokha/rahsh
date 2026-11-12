@@ -217,13 +217,16 @@ export class Terrain {
       composeTexture(regWin, this.loader, this.renderer, -9).then((t) => { onStep?.(); return t; }),
     ]);
     for (const ch of this.chunks) {
+      if (!cityTex) break;
       setUVs(ch.geometry, cityWin);
       ch.material.map = cityTex;
       ch.material.needsUpdate = true;
     }
-    setUVs(this.regionMesh.geometry, regWin);
-    this.regionMesh.material.map = regTex;
-    this.regionMesh.material.needsUpdate = true;
+    if (regTex) {
+      setUVs(this.regionMesh.geometry, regWin);
+      this.regionMesh.material.map = regTex;
+      this.regionMesh.material.needsUpdate = true;
+    }
   }
 
   /** Progressive refinement: z17 (~0.9 m/px) per town chunk, z13 for the region. */
@@ -245,6 +248,7 @@ export class Terrain {
       for (let ch = next(); ch; ch = next()) {
         const win = tileWindow(ch.userData.rect, zoom);
         const tex = await composeTexture(win, this.loader, this.renderer, 0);
+        if (!tex) continue;
         setUVs(ch.geometry, win);
         ch.material.map = tex;
         ch.material.needsUpdate = true;
@@ -255,8 +259,9 @@ export class Terrain {
     const reg = { x0: this.region.x0, x1: this.region.x1, y0: this.region.y0, y1: this.region.y1 };
     const regWin = tileWindow(reg, 13);
     workers.push(composeTexture(regWin, this.loader, this.renderer, 5).then((tex) => {
+      if (!tex) return;
       setUVs(this.regionMesh.geometry, regWin);
-      this.regionMesh.material.map.dispose();
+      this.regionMesh.material.map?.dispose();
       this.regionMesh.material.map = tex;
     }));
     await Promise.all(workers);
