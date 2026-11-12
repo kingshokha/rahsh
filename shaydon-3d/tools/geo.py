@@ -1,4 +1,4 @@
-"""Shared geographic constants and Web-Mercator helpers.
+"""Shared geographic constants (per city, chosen by the CITY env var) and Web-Mercator helpers.
 
 Local scene coordinates are metres: +x east, +y north, origin at ORIGIN.
 They are derived from Web-Mercator metres scaled by cos(lat0) so that the
@@ -6,9 +6,14 @@ aerial imagery tiles (which are in Web-Mercator) line up exactly.
 """
 import math
 
-ORIGIN = (40.6660, 70.3590)                 # lat, lon - centre of Shaydon
-CITY_BBOX = (70.3220, 40.6400, 70.3960, 40.6920)    # w, s, e, n  (~6.2 x 5.8 km)
-REGION_BBOX = (70.0500, 40.4600, 70.6700, 40.8800)  # mountains + valley context
+import json
+import os
+
+CITY = os.environ.get("CITY", "shaydon")
+_CFG = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cities.json")))[CITY]
+ORIGIN = tuple(_CFG["origin"])               # lat, lon - centre of the town
+CITY_BBOX = tuple(_CFG["city_bbox"])         # w, s, e, n
+REGION_BBOX = tuple(_CFG["region_bbox"])     # mountains + valley context
 
 R = 6378137.0
 K = math.cos(math.radians(ORIGIN[0]))

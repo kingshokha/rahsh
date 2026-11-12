@@ -3,7 +3,7 @@ files plus data/imagery.json, for hosts whose sandbox blocks third-party
 requests (e.g. a claude.ai artifact).  The windows mirror src/terrain.js.
 
 Usage:  python3 bake_imagery.py <cache_dir> <out_root>
-        (writes <out_root>/img/*.jpg and <out_root>/data/imagery.json)
+        (writes <out_root>/data/<CITY>/img/*.jpg and <out_root>/data/<CITY>/imagery.json)
 """
 import json
 import math
@@ -13,10 +13,10 @@ import sys
 from PIL import Image
 
 from fetch_data import ESRI, curl
-from geo import K, MX0, MY0, R
+from geo import CITY, K, MX0, MY0, R
 
 CACHE, OUT = sys.argv[1], sys.argv[2]
-meta = json.load(open(os.path.join(os.path.dirname(__file__), "..", "data", "city.json")))["meta"]
+meta = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", CITY, "city.json")))["meta"]
 
 
 def to_tile(x, y, z):
@@ -50,8 +50,8 @@ def windows():
             yield window(rect, 17), 78
 
 
-os.makedirs(os.path.join(OUT, "img"), exist_ok=True)
-os.makedirs(os.path.join(OUT, "data"), exist_ok=True)
+IMG = f"data/{CITY}/img"
+os.makedirs(os.path.join(OUT, IMG), exist_ok=True)
 manifest = {}
 for (z, tx0, ty0, nx, ny), q in windows():
     im = Image.new("RGB", (nx * 256, ny * 256), (156, 141, 116))
@@ -65,8 +65,8 @@ for (z, tx0, ty0, nx, ny), q in windows():
                 im.paste(Image.open(f).convert("RGB"), (x * 256, y * 256))
             except Exception:
                 pass
-    name = f"img/z{z}_{tx0}_{ty0}.jpg"
+    name = f"{IMG}/z{z}_{tx0}_{ty0}.jpg"
     im.save(os.path.join(OUT, name), quality=q, optimize=True, progressive=True)
     manifest[f"{z}/{tx0}/{ty0}/{nx}/{ny}"] = name
     print(name, im.size, os.path.getsize(os.path.join(OUT, name)) // 1024, "KB")
-json.dump(manifest, open(os.path.join(OUT, "data", "imagery.json"), "w"), indent=0)
+json.dump(manifest, open(os.path.join(OUT, "data", CITY, "imagery.json"), "w"), indent=0)

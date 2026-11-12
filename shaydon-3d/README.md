@@ -1,4 +1,4 @@
-# Шайдон 3D — a realistic 3D model of Shaydon
+# 3D models of Shaydon and Khujand
 
 An interactive, browser-based 3D model of **Shaydon** (Шайдон), the district
 centre of Ashti district, Sughd region, Tajikistan (40.666° N, 70.359° E). The
@@ -10,6 +10,12 @@ town sits where the Ashtsoy river leaves the Kurama range for the Fergana valley
 |---|---|---|
 | ![](screenshots/centre.jpg) | ![](screenshots/street.jpg) | ![](screenshots/gorge.jpg) |
 
+The same viewer and data pipeline also builds **Khujand** (Хуҷанд), the
+regional capital on the Syr Darya: 65,518 buildings (≈17k from OpenStreetMap,
+the rest Microsoft ML footprints), 135,300 trees, the river as water polygons,
+Soviet-era apartment blocks and the Mogoltau mountains. Open it with
+`index.html?city=khujand`.
+
 Everything is placed from real map data, nothing is hand-placed:
 
 | Layer | Source | How it is used |
@@ -20,8 +26,10 @@ Everything is placed from real map data, nothing is hand-placed:
 | Trees | detected in the aerial imagery (canopy segmentation) | 30,702 trees at their real positions; poplars along streets and ditches, broadleaf fruit trees, large chinars |
 | Streets, canals, river, schools, culture palace | OpenStreetMap | asphalt main road, irrigation canals, Ashtsoy stream, labels |
 
-Building heights are not available for Shaydon in any open dataset, so they are
-estimated from footprint size and shape (most private houses are single storey).
+Building heights come from OpenStreetMap where it has them (≈2,000 buildings in
+Khujand). Elsewhere they are estimated from footprint size and shape: most
+private houses are single storey, and in Khujand long rectangles 10–16 m deep
+are treated as 3–9 storey apartment blocks.
 
 ## Viewing
 
@@ -39,21 +47,25 @@ from jsDelivr and the imagery from Esri, so the browser needs internet access.
 Controls: left drag to pan, right drag to rotate, wheel to zoom, double-click to
 fly to a point. The buttons on the right jump to preset views; the slider sets
 the time of day (real sun position for Shaydon in June). URL parameters:
-`?view=centre|street|gorge|fan|valley|overview`, `&t=18.5` (hour), `&noao`
-(disable ambient occlusion on slow GPUs).
+`?city=shaydon|khujand`, `&view=<id>` (a preset view from `tools/cities.json`),
+`&t=18.5` (hour), `&noao` (disable ambient occlusion on slow GPUs).
 
 ## Rebuilding the data
 
 ```sh
 cd shaydon-3d/tools
 pip install numpy opencv-python-headless shapely pyarrow
-python3 fetch_data.py /tmp/shaydon-cache        # OSM, elevation, imagery for analysis
-python3 fetch_buildings.py /tmp/shaydon-cache   # Overture building footprints
-python3 build_data.py /tmp/shaydon-cache ../data
+export CITY=khujand                             # or shaydon; areas live in cities.json
+python3 fetch_data.py /tmp/cache-$CITY          # OSM, elevation, imagery for analysis
+python3 fetch_buildings.py /tmp/cache-$CITY     # Overture building footprints
+python3 build_data.py /tmp/cache-$CITY          # writes ../data/$CITY/
+python3 bake_imagery.py /tmp/cache-$CITY OUT    # optional: imagery for sandboxed hosts
 ```
 
-`geo.py` holds the area of interest and the coordinate system (Web-Mercator
-metres scaled by cos(lat₀), origin at the town centre) shared with the viewer.
+`cities.json` holds each city's area, coordinate origin, preset views and
+labels. `geo.py` defines the coordinate system (Web-Mercator metres scaled by
+cos(lat₀), origin at the town centre) shared with the viewer. To add a city,
+add an entry there and run the steps above.
 
 ## Files
 
@@ -63,7 +75,7 @@ metres scaled by cos(lat₀), origin at the town centre) shared with the viewer.
 - `src/buildings.js`: building geometry and procedural facades
 - `src/trees.js`: instanced trees with leaf-card crowns and three levels of detail
 - `src/features.js`: roads, water, utility poles
-- `data/`: generated assets (`city.json`, `trees.bin`, terrarium-encoded elevation PNGs)
+- `data/<city>/`: generated assets (`city.json`, `trees.bin`, terrarium-encoded elevation PNGs)
 
 ## Attribution
 

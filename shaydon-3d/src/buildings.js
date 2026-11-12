@@ -208,7 +208,7 @@ function flatRoof(pts, topY, col, roofs) {
   }
 }
 
-export function buildBuildings(list, heightAt, { chunkSize = 800 } = {}) {
+export function buildBuildings(list, heightAt, { chunkSize = 1100 } = {}) {
   const chunks = new Map();
   const get = (x, y) => {
     const key = `${Math.floor(x / chunkSize)},${Math.floor(y / chunkSize)}`;

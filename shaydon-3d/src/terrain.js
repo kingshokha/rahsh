@@ -193,9 +193,12 @@ export class Terrain {
     }
     geo.setIndex(keep);
     // Far valley floor beyond the regional grid, lost in the haze.
-    let south = 0;
-    for (let i = 0; i < r.nx; i++) south += r.at(i, r.ny - 1);
-    const floorH = south / r.nx - 4;
+    // sit it at the low end of the regional border so it never covers the town
+    const edge = [];
+    for (let i = 0; i < r.nx; i++) edge.push(r.at(i, 0), r.at(i, r.ny - 1));
+    for (let j = 0; j < r.ny; j++) edge.push(r.at(0, j), r.at(r.nx - 1, j));
+    edge.sort((a, b) => a - b);
+    const floorH = Math.min(edge[Math.floor(edge.length * 0.1)], c.min) - 6;
     const far = new THREE.Mesh(new THREE.CircleGeometry(160000, 64).rotateX(-Math.PI / 2),
       new THREE.MeshStandardMaterial({ color: '#8f8a6c', roughness: 1 }));
     far.position.set((r.x0 + r.x1) / 2, floorH - ELEV0, -(r.y0 + r.y1) / 2);

@@ -16,7 +16,9 @@ import { buildFeatures } from './features.js';
 
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
-const LAT = 40.666, LON = 70.359;
+const CITY = (params.get('city') || window.CITY || 'shaydon').replace(/[^a-z0-9-]/g, '');
+const DATA = `data/${CITY}/`;
+let LAT = 40.666, LON = 70.359; // replaced by the city's origin once loaded
 
 // ------------------------------------------------------------------ loader UI
 const steps = { total: 9, done: 0 };
@@ -162,14 +164,7 @@ function addLabel(text, sub, x, y, h, cls = '') {
 }
 
 // ------------------------------------------------------------------ camera views
-const VIEWS = {
-  overview: { target: [-250, 450], from: [700, -2750], up: 1250 },
-  centre: { target: [-40, -40], from: [330, -480], up: 230 },
-  gorge: { target: [-1700, 2100], from: [-700, 550], up: 520 },
-  fan: { target: [-1500, -1200], from: [-300, -3300], up: 650 },
-  valley: { target: [2200, -3800], from: [-2300, 3600], up: 1250 },
-  street: null, // computed from the main road
-};
+let VIEWS = {};
 
 let flight = null;
 function flyTo(target, from, dur = 2.6) {
@@ -180,37 +175,52 @@ function flyTo(target, from, dur = 2.6) {
   };
 }
 
+const LOOK = { N: [0, 1], S: [0, -1], E: [1, 0], W: [-1, 0] };
 function viewVectors(name) {
-  if (name === 'street' && features?.mainRoads.length) {
-    // stand on the main street near the centre, looking north-west to the gorge
+  const v = VIEWS[name] || Object.values(VIEWS)[0];
+  if (v.street && features?.mainRoads.length) {
+    // stand in the right-hand lane of the nearest main road, looking along it
     let best = null;
     for (const pts of features.mainRoads) {
       for (let i = 0; i < pts.length; i++) {
-        const d = Math.hypot(pts[i].x + 189, pts[i].y + 174);
+        const d = Math.hypot(pts[i].x - v.street[0], pts[i].y - v.street[1]);
         if (!best || d < best.d) best = { d, pts, i };
       }
     }
     const { pts, i } = best;
     const a = pts[Math.max(0, i - 15)], b = pts[Math.min(pts.length - 1, i + 15)];
-    const ahead = a.y > b.y ? a : b;
+    const [lx, ly] = LOOK[v.look] || LOOK.N;
     const p = pts[i];
+    const score = (q) => (q.x - p.x) * lx + (q.y - p.y) * ly;
+    const ahead = score(a) > score(b) ? a : b;
     const dir = new THREE.Vector2().subVectors(ahead, p).normalize();
-    const side = new THREE.Vector2(dir.y, -dir.x).multiplyScalar(1.8); // right-hand lane
+    const side = new THREE.Vector2(dir.y, -dir.x).multiplyScalar(1.8);
     const cx = p.x + side.x, cy = p.y + side.y;
     const tx = cx + dir.x * 80, ty = cy + dir.y * 80;
     return { from: world(cx, cy, heightAt(cx, cy) + 1.7), target: world(tx, ty, heightAt(tx, ty) + 3) };
   }
-  const v = VIEWS[name];
   const t = world(v.target[0], v.target[1], heightAt(v.target[0], v.target[1]));
   const f = world(v.from[0], v.from[1], heightAt(v.from[0], v.from[1]) + v.up);
   return { from: f, target: t };
 }
 
-document.querySelectorAll('#views button').forEach((b) => b.addEventListener('click', () => {
-  document.querySelectorAll('#views button').forEach((x) => x.classList.toggle('active', x === b));
-  const { from, target } = viewVectors(b.dataset.view);
-  flyTo(target, from);
-}));
+function buildViewButtons(views) {
+  const box = $('#views');
+  box.innerHTML = '';
+  views.forEach((v, i) => {
+    VIEWS[v.id] = v;
+    const b = document.createElement('button');
+    b.dataset.view = v.id;
+    b.textContent = v.label;
+    if (i === 0) b.classList.add('active');
+    b.addEventListener('click', () => {
+      box.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+      const { from, target } = viewVectors(v.id);
+      flyTo(target, from);
+    });
+    box.appendChild(b);
+  });
+}
 
 // double-click: fly towards the clicked point
 const ray = new THREE.Raycaster();
@@ -247,55 +257,70 @@ setTimeout(() => { $('#help').style.opacity = 0; }, 12000);
 async function boot() {
   $('#status').textContent = 'Данные карты…';
   const [city, treeBuf] = await Promise.all([
-    fetch('data/city.json').then((r) => r.json()),
-    fetch('data/trees.bin').then((r) => r.arrayBuffer()),
+    fetch(DATA + 'city.json').then((r) => r.json()),
+    fetch(DATA + 'trees.bin').then((r) => r.arrayBuffer()),
   ]);
   progress('Рельеф…');
   initGeo(city.meta);
+  const vc = city.meta.viewer || {};
+  LAT = city.meta.origin.lat; LON = city.meta.origin.lon;
+  if (vc.title) {
+    document.title = `${vc.title} 3D`;
+    $('#title h1').innerHTML = `${vc.title}<span>${vc.subtitle || ''}</span>`;
+    $('#title p').textContent = vc.info || '';
+    $('#loader h2').textContent = vc.title;
+  }
+  buildViewButtons(vc.views || []);
   $('#attrib').innerHTML = city.meta.attribution.join(' · ');
   const [cityHF, regionHF] = await Promise.all([
-    loadHeightField(`data/${city.meta.terrainCity.file}`, city.meta.terrainCity),
-    loadHeightField(`data/${city.meta.terrainRegion.file}`, city.meta.terrainRegion),
+    loadHeightField(DATA + city.meta.terrainCity.file, city.meta.terrainCity),
+    loadHeightField(DATA + city.meta.terrainRegion.file, city.meta.terrainRegion),
   ]);
   heightAt = makeHeightAt(cityHF, regionHF);
   progress('Поверхность…');
 
-  await loadBakedManifest('data/imagery.json');
+  await loadBakedManifest(DATA + 'imagery.json');
   const loader = new TileLoader(14);
   terrain = new Terrain(scene, renderer, cityHF, regionHF, loader);
   terrain.build(4, 4);
   progress('Здания…');
   await new Promise(requestAnimationFrame);
 
-  const b = buildBuildings(city.buildings, heightAt);
+  // phones: drop the smallest outbuildings and half of the trees to save memory
+  const list = isPhone ? city.buildings.filter((x) => x.h > 2.95 || x.p.length > 8) : city.buildings;
+  const b = buildBuildings(list, heightAt);
   buildings = b.group;
   scene.add(buildings);
   progress('Деревья…');
   await new Promise(requestAnimationFrame);
 
-  trees = buildTrees(treeBuf, heightAt);
+  trees = buildTrees(treeBuf, heightAt, { stride: isPhone && treeBuf.byteLength > 12 * 60000 ? 2 : 1 });
   scene.add(trees.group);
   features = buildFeatures(city, heightAt);
   scene.add(features.group);
   progress('Подписи…');
 
-  addLabel('Шайдон', 'Shaydon', 60, -640, heightAt(60, -640) + 160, 'town');
   const seen = new Set();
-  for (const p of city.pois) {
-    if (p.kind === 'town' || p.kind === 'village' || !p.name) continue;
-    seen.add(p.name);
-    addLabel(p.name, '', p.x, p.y, heightAt(p.x, p.y) + 30);
+  for (const l of vc.labels || []) {
+    seen.add(l.text);
+    addLabel(l.text, l.sub || '', l.x, l.y, heightAt(l.x, l.y) + (l.up || 40), l.cls || '');
   }
-  for (const l of b.labels) {
-    if ([...seen].some((s) => s.startsWith(l.name) || l.name.startsWith(s))) continue;
-    addLabel(l.name, '', l.x, l.y, l.top + 12);
+  if (vc.poiLabels) {
+    for (const p of city.pois) {
+      if (p.kind === 'town' || p.kind === 'village' || !p.name || seen.has(p.name)) continue;
+      seen.add(p.name);
+      addLabel(p.name, '', p.x, p.y, heightAt(p.x, p.y) + 30);
+    }
   }
-  addLabel('Ашт', 'река', -1180, 900, heightAt(-1180, 900) + 40);
-  addLabel('Хребет Курама', '', -400, 9000, heightAt(-400, 9000) + 300);
-  addLabel('Ферганская долина', '', 9000, -12000, heightAt(9000, -12000) + 300);
+  if (vc.buildingLabels) {
+    for (const l of b.labels) {
+      if ([...seen].some((s) => s.startsWith(l.name) || l.name.startsWith(s))) continue;
+      addLabel(l.name, '', l.x, l.y, l.top + 12);
+    }
+  }
 
   setTime(+$('#time').value);
-  const v = viewVectors(params.get('view') || 'overview');
+  const v = viewVectors(params.get('view') || (vc.views?.[0]?.id ?? 'overview'));
   camera.position.copy(v.from);
   controls.target.copy(v.target);
   if (params.get('view')) document.querySelectorAll('#views button').forEach((x) => x.classList.toggle('active', x.dataset.view === params.get('view')));
@@ -374,7 +399,7 @@ function render(dt) {
     trees.uniforms.uTime.value += dt;
     if ((lodTimer -= dt) <= 0) { trees.updateLOD(camera); lodTimer = 0.25; }
   }
-  if (features) features.waterNormals.offset.y -= dt * 0.05;
+  if (features) { features.waterNormals.offset.y -= dt * 0.05; features.lakeNormals.offset.x += dt * 0.004; }
 
   const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
   compassSvg.style.transform = `rotate(${THREE.MathUtils.radToDeg(az)}deg)`;

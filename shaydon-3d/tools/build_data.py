@@ -21,10 +21,13 @@ import pyarrow.parquet as pq
 import shapely
 from shapely.geometry import LineString, Polygon
 
-from geo import CITY_BBOX, K, MX0, MY0, ORIGIN, R, REGION_BBOX, local, tile_range
+from shapely.ops import polygonize, unary_union
+
+from geo import _CFG, CITY, CITY_BBOX, K, MX0, MY0, ORIGIN, R, REGION_BBOX, local, tile_range
 
 CACHE = sys.argv[1] if len(sys.argv) > 1 else "cache"
-OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "data")
+OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), "..", "data", CITY)
+PROFILE = _CFG.get("profile", "town")       # "town": village-like, "city": apartment blocks
 os.makedirs(OUT, exist_ok=True)
 
 
@@ -64,8 +67,17 @@ def bilinear(img, px, py):
 
 
 def build_terrain(dem_z, bbox, spacing, name, smooth):
-    dem = np.load(os.path.join(CACHE, f"dem{dem_z}.npy"))
-    tx0, _, ty0, _ = tile_range(bbox, dem_z)
+    tx0, tx1, ty0, ty1 = tile_range(bbox, dem_z)
+    npy = os.path.join(CACHE, f"dem{dem_z}.npy")
+    if not os.path.exists(npy):
+        dem = np.zeros(((ty1 - ty0 + 1) * 256, (tx1 - tx0 + 1) * 256), np.float32)
+        for x in range(tx0, tx1 + 1):
+            for y in range(ty0, ty1 + 1):
+                t = cv2.imread(os.path.join(CACHE, f"dem{dem_z}", f"{dem_z}_{x}_{y}.png"))[..., ::-1].astype(np.float32)
+                dem[(y - ty0) * 256:(y - ty0 + 1) * 256, (x - tx0) * 256:(x - tx0 + 1) * 256] = \
+                    t[..., 0] * 256 + t[..., 1] + t[..., 2] / 256 - 32768
+        np.save(npy, dem)
+    dem = np.load(npy)
     x0, y0, x1, y1 = bbox_local(bbox)
     nx = int(round((x1 - x0) / spacing)) + 1
     ny = int(round((y1 - y0) / spacing)) + 1
@@ -113,7 +125,7 @@ WATER_W = {"river": 8, "stream": 4, "canal": 3, "ditch": 1.2, "drain": 1.2}
 
 def load_osm():
     d = json.load(open(os.path.join(CACHE, "osm.json")))
-    roads, water, pois, landuse = [], [], [], []
+    roads, water, pois, landuse, lakes = [], [], [], [], []
     for e in d["elements"]:
         t = e.get("tags", {})
         if e["type"] == "node":
@@ -121,6 +133,19 @@ def load_osm():
                 x, y = local(e["lat"], e["lon"])
                 pois.append({"name": t.get("name", ""), "kind": t.get("amenity") or t.get("place"),
                              "x": round(x, 1), "y": round(y, 1)})
+            continue
+        if e["type"] == "relation" and t.get("natural") == "water":
+            outer, inner = [], []
+            for m in e.get("members", []):
+                if m.get("type") == "way" and "geometry" in m:
+                    line = LineString([local(p["lat"], p["lon"]) for p in m["geometry"]])
+                    (inner if m.get("role") == "inner" else outer).append(line)
+            polys = list(polygonize(unary_union(outer)))
+            if polys:
+                shape = unary_union(polys)
+                for hole in polygonize(unary_union(inner)) if inner else []:
+                    shape = shape.difference(hole)
+                lakes.append((t.get("name", ""), shape))
             continue
         if e["type"] == "relation":
             if "name" in t and ("amenity" in t or "building" in t):
@@ -136,12 +161,34 @@ def load_osm():
         if "highway" in t and t["highway"] in ROAD_W:
             roads.append({"type": t["highway"], "w": ROAD_W[t["highway"]], "name": t.get("name", ""),
                           "surface": t.get("surface", ""), "p": flat})
-        elif "waterway" in t and t["waterway"] in WATER_W:
+        elif "waterway" in t and t["waterway"] in WATER_W and t["waterway"] != "river":
             water.append({"type": t["waterway"], "w": WATER_W[t["waterway"]],
                           "name": t.get("name", ""), "p": flat})
+        elif t.get("natural") == "water" and len(pts) > 3 and pts[0] == pts[-1]:
+            lakes.append((t.get("name", ""), Polygon(pts)))
         elif "landuse" in t:
             landuse.append((t["landuse"], pts))
-    return roads, water, pois, landuse
+    return roads, water, pois, landuse, lakes
+
+
+def water_polygons(lakes):
+    x0, y0, x1, y1 = bbox_local(CITY_BBOX)
+    clip = Polygon([(x0 - 800, y0 - 800), (x1 + 800, y0 - 800), (x1 + 800, y1 + 800), (x0 - 800, y1 + 800)])
+    out = []
+    for name, shape in lakes:
+        shape = shape.buffer(0).intersection(clip).simplify(1.5)
+        for pg in getattr(shape, "geoms", [shape]):
+            if pg.geom_type != "Polygon" or pg.area < 400:
+                continue
+            ext = list(pg.exterior.coords)[:-1]
+            if not pg.exterior.is_ccw:
+                ext = ext[::-1]
+            rings = [[round(v, 1) for p in ext for v in p]]
+            for hole in pg.interiors:
+                rings.append([round(v, 1) for p in list(hole.coords)[:-1] for v in p])
+            out.append({"name": name, "rings": rings})
+    print(f"water polygons: {len(out)}")
+    return out
 
 
 # --------------------------------------------------------------------------- buildings
@@ -168,27 +215,49 @@ def roof_colour(mosaic, poly_px):
     return "#%02x%02x%02x" % (int(bgr[2]), int(bgr[1]), int(bgr[0]))
 
 
-def classify(key, area, rect_l, rect_w, fill, dist_centre):
-    """Return (wall height, roof type, pitch).  Heuristic, deterministic per building."""
+BLOCK_WALLS = ["#c9c4b8", "#d6d0c2", "#bfb9ad", "#d9cfb9", "#c4b9a3", "#e0dbd0", "#b7b3aa", "#cfc2a8"]
+
+
+def classify(key, area, rect_l, rect_w, fill, dist_centre, floors=None, height=None, cls=None):
+    """Return (wall height, roof type, pitch, apartment block?).  Deterministic per building."""
     r1, r2 = rnd(key, "h"), rnd(key, "r")
     aspect = rect_l / max(rect_w, 0.1)
-    central = dist_centre < 900
+    city = PROFILE == "city"
+    central = dist_centre < (2500 if city else 900)
+    if height:
+        h = float(height)
+        return h, ("flat" if h > 8 else "hip"), 16, h > 8
+    if floors:
+        f = int(floors)
+        if f >= 3:
+            return f * 3.0 + 0.6, "flat", 0, True
+        return f * 3.1 + 0.3, ("hip" if fill > 0.8 else "flat"), 20, False
+    if cls in ("house", "detached", "garage", "garages", "shed", "hut", "farm_auxiliary"):
+        floors = 2 if r1 < 0.25 and area > 90 else 1
+        return floors * 3.0 + 0.2 + r2 * 0.4, ("hip" if fill > 0.8 else "flat"), 20, False
+    if cls == "apartments" and area > 120:
+        return (5 if r1 < 0.7 else 9) * 3.0 + 0.6, "flat", 0, True
     if area < 28:                                   # sheds, garages, outbuildings
-        return 2.4 + r1 * 0.6, "shed" if r2 < 0.6 else "flat", 6
+        return 2.4 + r1 * 0.6, "shed" if r2 < 0.6 else "flat", 6, False
+    if city and area > 380 and fill > 0.88 and 10 < rect_w < 16.5 and rect_l > 36:
+        # Soviet-era panel / brick apartment block
+        f = 5 if r1 < 0.52 else 9 if r1 < 0.78 else 4 if r1 < 0.93 else 3
+        return f * 3.0 + 0.6, "flat", 0, True
     if area > 900:                                  # halls, markets, sport halls
-        return 7.5 + r1 * 3, "flat" if fill < 0.85 or r2 < 0.5 else "gable", 8
+        return 7.5 + r1 * 3, "flat" if fill < 0.85 or r2 < 0.5 else "gable", 8, False
     if area > 320:                                  # schools, offices, clinics
-        floors = 1 + (r1 < (0.75 if central else 0.4)) + (central and aspect > 2.5 and r1 < 0.2)
+        floors = 1 + (r1 < (0.75 if central else 0.4)) + (central and aspect > 2.5 and r1 < 0.2) + (city and r2 < 0.3)
         roof = "hip" if fill > 0.82 and r2 < 0.65 else "flat"
-        return floors * 3.3 + 0.5, roof, 16
-    # private houses: overwhelmingly single storey in Shaydon
-    floors = 2 if r1 < (0.07 if central else 0.03) and area > 90 else 1
+        return floors * 3.3 + 0.5, roof, 16, floors >= 3
+    # private houses
+    two = (0.22 if central else 0.12) if city else (0.07 if central else 0.03)
+    floors = 2 if r1 < two and area > 90 else 1
     wall = floors * 3.0 + 0.1 + r2 * 0.5
     if fill < 0.78:
-        return wall, "flat", 0
+        return wall, "flat", 0, False
     if aspect > 2.1:
-        return wall, "gable", 18 + r2 * 8
-    return wall, "hip", 18 + r2 * 8
+        return wall, "gable", 18 + r2 * 8, False
+    return wall, "hip", 18 + r2 * 8, False
 
 
 def rect_from(poly_xy):
@@ -233,10 +302,14 @@ def detect_extra_roofs(mosaic, footprint_mask, road_mask, town_mask):
 
 def build_buildings(mosaic, tx0, ty0, roads, landuse):
     t = pq.read_table(os.path.join(CACHE, "overture_buildings.parquet"),
-                      columns=["id", "geometry", "names", "class"])
+                      columns=["id", "geometry", "names", "class", "num_floors", "height"])
     geoms = shapely.from_wkb(t.column("geometry").to_pylist())
     ids = t.column("id").to_pylist()
     names = [(n or {}).get("primary") for n in t.column("names").to_pylist()]
+    names = [n if n and len(n) > 4 and not n[0].isdigit() and "улица" not in n.lower() and "кӯча" not in n.lower() else None
+             for n in names]
+    extra_attr = {gid: (f, hh, c) for gid, f, hh, c in zip(ids, t.column("num_floors").to_pylist(),
+                                                          t.column("height").to_pylist(), t.column("class").to_pylist())}
 
     def to_px(xy):
         px, py = local_to_pixel(xy[:, 0], xy[:, 1], 17, tx0, ty0)
@@ -287,7 +360,9 @@ def build_buildings(mosaic, tx0, ty0, roads, landuse):
         fill = area / max(rw * rh, 1e-6)
         L, W = max(rw, rh), min(rw, rh)
         cx, cy = P.centroid.x, P.centroid.y
-        wall, roof, pitch = classify(gid, area, L, W, fill, math.hypot(cx + 150, cy - 250))
+        cxc, cyc = _CFG.get("centre", [0, 0])
+        wall, roof, pitch, block = classify(gid, area, L, W, fill, math.hypot(cx - cxc, cy - cyc),
+                                            *extra_attr.get(gid, (None, None, None)))
         if roof in ("hip", "gable", "shed"):
             ring = box                                        # regularised rectangle
         else:
@@ -296,12 +371,12 @@ def build_buildings(mosaic, tx0, ty0, roads, landuse):
             ring = ring[::-1]
         colour = roof_colour(mosaic, pp) or "#9a9a96"
         out.append({
-            "p": [round(float(v), 2) for v in np.asarray(ring).ravel()],
+            "p": [round(float(v), 1) for v in np.asarray(ring).ravel()],
             "h": round(wall, 2),
             "roof": roof,
             "pitch": round(pitch, 1),
             "rc": colour,
-            "wc": WALLS[int(rnd(gid, "w") * len(WALLS))],
+            "wc": (BLOCK_WALLS if block else WALLS)[int(rnd(gid, "w") * len((BLOCK_WALLS if block else WALLS)))],
             **({"name": nm} if nm else {}),
         })
     return out, fmask, rmask
@@ -365,18 +440,19 @@ def build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water):
 if __name__ == "__main__":
     terrain_city = build_terrain(14, CITY_BBOX, 10.0, "terrain_city.png", smooth=1.3)
     terrain_region = build_terrain(11, REGION_BBOX, 60.0, "terrain_region.png", smooth=0.6)
-    roads, water, pois, landuse = load_osm()
+    roads, water, pois, landuse, lakes = load_osm()
     mosaic, tx0, ty0 = load_mosaic()
     buildings, fmask, rmask = build_buildings(mosaic, tx0, ty0, roads, landuse)
     ntrees = build_trees(mosaic, tx0, ty0, fmask, rmask, roads, water)
     city = {
         "meta": {
-            "name": "Шайдон / Shaydon",
+            "name": _CFG.get("viewer", {}).get("title", CITY),
             "origin": {"lat": ORIGIN[0], "lon": ORIGIN[1]},
             "scale": K,
             "cityBBox": CITY_BBOX, "regionBBox": REGION_BBOX,
             "terrainCity": terrain_city, "terrainRegion": terrain_region,
             "trees": ntrees,
+            "viewer": _CFG.get("viewer", {}),
             "attribution": [
                 "Map data © OpenStreetMap contributors (ODbL)",
                 "Building footprints: Microsoft Global ML Building Footprints via Overture Maps (ODbL)",
@@ -388,6 +464,7 @@ if __name__ == "__main__":
         "roads": roads,
         "water": water,
         "pois": pois,
+        "lakes": water_polygons(lakes),
     }
     with open(os.path.join(OUT, "city.json"), "w") as fh:
         json.dump(city, fh, ensure_ascii=False, separators=(",", ":"))

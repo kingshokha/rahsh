@@ -176,7 +176,7 @@ function leafMaterial(uniforms, map = null) {
   return m;
 }
 
-export function buildTrees(buffer, heightAt, { chunkSize = 600 } = {}) {
+export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1 } = {}) {
   const dv = new DataView(buffer);
   const N = buffer.byteLength / 12;
   const uniforms = { uTime: { value: 0 } };
@@ -185,19 +185,19 @@ export function buildTrees(buffer, heightAt, { chunkSize = 600 } = {}) {
     { cards: cardGeometry({ count: 64, y0: 0.32, shape: 'round', seed: 23, size: 0.34 }),
       core: crownGeometry({ lumps: 3, detail: 1, y0: 0.38, shape: 'round', seed: 29 }),
       hi: crownGeometry({ lumps: 6, detail: 2, y0: 0.32, shape: 'round', seed: 3 }),
-      lo: crownGeometry({ lumps: 2, detail: 1, y0: 0.32, shape: 'round', seed: 5 }),
+      lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.32, shape: 'round', seed: 5 }),
       trunk: trunkGeometry(0.5, 0.07),
       colors: ['#3b5222', '#45592a', '#34491f', '#4d5f2c', '#2f4420', '#57652f', '#3f4f24', '#5a6a34'] },
     { cards: cardGeometry({ count: 56, y0: 0.1, shape: 'column', seed: 31, size: 0.42 }),
       core: crownGeometry({ lumps: 4, detail: 1, y0: 0.14, shape: 'column', seed: 37 }),
       hi: crownGeometry({ lumps: 7, detail: 2, y0: 0.1, shape: 'column', seed: 11 }),
-      lo: crownGeometry({ lumps: 3, detail: 1, y0: 0.1, shape: 'column', seed: 13 }),
+      lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.1, shape: 'column', seed: 13 }),
       trunk: trunkGeometry(0.3, 0.09),
       colors: ['#33492a', '#3a512c', '#2f4426', '#41582f'] },
     { cards: cardGeometry({ count: 80, y0: 0.3, shape: 'round', seed: 41, size: 0.3 }),
       core: crownGeometry({ lumps: 3, detail: 1, y0: 0.36, shape: 'round', seed: 43 }),
       hi: crownGeometry({ lumps: 8, detail: 2, y0: 0.3, shape: 'round', seed: 17 }),
-      lo: crownGeometry({ lumps: 2, detail: 1, y0: 0.3, shape: 'round', seed: 19 }),
+      lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.3, shape: 'round', seed: 19 }),
       trunk: trunkGeometry(0.48, 0.06),
       colors: ['#384f22', '#30451e', '#425628'] },
   ];
@@ -210,7 +210,7 @@ export function buildTrees(buffer, heightAt, { chunkSize = 600 } = {}) {
 
   // bucket per chunk & kind
   const buckets = new Map();
-  for (let i = 0; i < N; i++) {
+  for (let i = 0; i < N; i += stride) {
     const o = i * 12;
     const x = dv.getFloat32(o, true), y = dv.getFloat32(o + 4, true);
     const r = dv.getUint8(o + 8) / 20, h = dv.getUint8(o + 9) / 8, k = dv.getUint8(o + 10), s = dv.getUint8(o + 11);
@@ -262,11 +262,11 @@ export function buildTrees(buffer, heightAt, { chunkSize = 600 } = {}) {
   function updateLOD(camera) {
     for (const c of chunks) {
       const d = camera.position.distanceTo(v.set(c.cx, c.z, -c.cy));
-      const close = d < 700, near = d < 1600;
+      const close = d < 650, near = d < 1500;
       c.cards.visible = c.core.visible = close;
       c.hi.visible = near && !close;
       c.lo.visible = !near;
-      c.tr.visible = d < 1600;
+      c.tr.visible = d < 1300;
       c.lo.castShadow = d < 2500;
     }
   }

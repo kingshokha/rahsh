@@ -83,6 +83,7 @@ export function tileWindow(rect, z) {
 }
 
 export async function composeTexture(win, loader, renderer, priority = 0, maxSize = 8192) {
+  maxSize = Math.min(maxSize, renderer.capabilities.maxTextureSize);
   const scale = Math.min(1, maxSize / (256 * Math.max(win.nx, win.ny)));
   const ts = Math.floor(256 * scale);
   const canvas = document.createElement('canvas');

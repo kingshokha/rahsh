@@ -151,6 +151,35 @@ export function buildFeatures(city, heightAt) {
     group.add(m);
   }
 
+  // Rivers and reservoirs as polygons.  The surface follows the lowest ground
+  // near each vertex, which tracks the river's own gradient through the town.
+  const lakeNormals = wn.clone();
+  lakeNormals.repeat.set(1 / 45, 1 / 45);
+  const lakeMat = water.clone();
+  lakeMat.normalMap = lakeNormals;
+  lakeMat.normalScale = new THREE.Vector2(0.5, 0.5);
+  lakeMat.side = THREE.DoubleSide;
+  for (const lake of city.lakes || []) {
+    const ring = (flat) => { const p = []; for (let i = 0; i < flat.length; i += 2) p.push(new THREE.Vector2(flat[i], flat[i + 1])); return p; };
+    const shape = new THREE.Shape(ring(lake.rings[0]));
+    for (const h of lake.rings.slice(1)) shape.holes.push(new THREE.Path(ring(h)));
+    const g = new THREE.ShapeGeometry(shape);
+    const pos = g.attributes.position, uv = g.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i);
+      let lo = heightAt(x, y);
+      for (const r of [40, 90, 160]) {
+        for (let a = 0; a < 8; a++) lo = Math.min(lo, heightAt(x + Math.cos(a * 0.785) * r, y + Math.sin(a * 0.785) * r));
+      }
+      pos.setXYZ(i, x, lo - ELEV0 + 1.2, -y);
+      uv.setXY(i, x, y);
+    }
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, lakeMat);
+    m.receiveShadow = true;
+    group.add(m);
+  }
+
   // Concrete utility poles every ~38 m along the main roads.
   const poleGeo = new THREE.CylinderGeometry(0.1, 0.16, 9, 6);
   poleGeo.translate(0, 4.5, 0);
@@ -183,5 +212,5 @@ export function buildFeatures(city, heightAt) {
   });
   for (const m of [poles, arms, lamps]) { m.castShadow = true; m.receiveShadow = true; group.add(m); }
 
-  return { group, waterNormals: wn, mainRoads };
+  return { group, waterNormals: wn, lakeNormals, mainRoads };
 }
