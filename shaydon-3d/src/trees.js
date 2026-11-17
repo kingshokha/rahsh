@@ -183,7 +183,7 @@ function leafMaterial(uniforms, map = null) {
   return m;
 }
 
-export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1 } = {}) {
+export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1, lod = {} } = {}) {
   const dv = new DataView(buffer);
   const N = buffer.byteLength / 12;
   const uniforms = { uTime: { value: 0 } };
@@ -191,40 +191,40 @@ export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1 } = {
   const kinds = [
     { cards: cardGeometry({ count: 64, y0: 0.32, shape: 'round', seed: 23, size: 0.34 }),
       core: crownGeometry({ lumps: 3, detail: 1, y0: 0.38, shape: 'round', seed: 29 }),
-      hi: crownGeometry({ lumps: 6, detail: 2, y0: 0.32, shape: 'round', seed: 3 }),
+      hi: crownGeometry({ lumps: 6, detail: 1, y0: 0.32, shape: 'round', seed: 3 }),
       lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.32, shape: 'round', seed: 5 }),
       trunk: trunkGeometry(0.5, 0.07),
       colors: ['#3b5222', '#45592a', '#34491f', '#4d5f2c', '#2f4420', '#57652f', '#3f4f24', '#5a6a34'] },
     { cards: cardGeometry({ count: 56, y0: 0.1, shape: 'column', seed: 31, size: 0.42 }),
       core: crownGeometry({ lumps: 4, detail: 1, y0: 0.14, shape: 'column', seed: 37 }),
-      hi: crownGeometry({ lumps: 7, detail: 2, y0: 0.1, shape: 'column', seed: 11 }),
+      hi: crownGeometry({ lumps: 7, detail: 1, y0: 0.1, shape: 'column', seed: 11 }),
       lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.1, shape: 'column', seed: 13 }),
       trunk: trunkGeometry(0.3, 0.09),
       colors: ['#33492a', '#3a512c', '#2f4426', '#41582f'] },
     { cards: cardGeometry({ count: 80, y0: 0.3, shape: 'round', seed: 41, size: 0.3 }),
       core: crownGeometry({ lumps: 3, detail: 1, y0: 0.36, shape: 'round', seed: 43 }),
-      hi: crownGeometry({ lumps: 8, detail: 2, y0: 0.3, shape: 'round', seed: 17 }),
+      hi: crownGeometry({ lumps: 8, detail: 1, y0: 0.3, shape: 'round', seed: 17 }),
       lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.3, shape: 'round', seed: 19 }),
       trunk: trunkGeometry(0.48, 0.06),
       colors: ['#384f22', '#30451e', '#425628'] },
     // 3: Scots pine - tall bare trunk, crown bunched at the top
     { cards: cardGeometry({ count: 60, y0: 0.6, shape: 'round', seed: 47, size: 0.32 }),
       core: crownGeometry({ lumps: 3, detail: 1, y0: 0.64, shape: 'round', seed: 53 }),
-      hi: crownGeometry({ lumps: 6, detail: 2, y0: 0.6, shape: 'round', seed: 59 }),
+      hi: crownGeometry({ lumps: 6, detail: 1, y0: 0.6, shape: 'round', seed: 59 }),
       lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.6, shape: 'round', seed: 61 }),
       trunk: trunkGeometry(0.75, 0.05), bark: '#8a5a3c',
       colors: ['#2b3d24', '#26381f', '#32452a', '#2d3f2a'] },
     // 4: birch - white trunk, light airy crown
     { cards: cardGeometry({ count: 56, y0: 0.3, shape: 'round', seed: 67, size: 0.3 }),
       core: crownGeometry({ lumps: 2, detail: 1, y0: 0.36, shape: 'round', seed: 71 }),
-      hi: crownGeometry({ lumps: 6, detail: 2, y0: 0.3, shape: 'round', seed: 73 }),
+      hi: crownGeometry({ lumps: 6, detail: 1, y0: 0.3, shape: 'round', seed: 73 }),
       lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.3, shape: 'round', seed: 79 }),
       trunk: trunkGeometry(0.6, 0.045), bark: '#d9d5cc',
       colors: ['#4f6a2c', '#5a7432', '#48632a', '#617b38'] },
     // 5: spruce - dark cone
     { cards: cardGeometry({ count: 70, y0: 0.08, shape: 'cone', seed: 83, size: 0.3 }),
       core: crownGeometry({ lumps: 5, detail: 1, y0: 0.1, shape: 'cone', seed: 89 }),
-      hi: crownGeometry({ lumps: 8, detail: 2, y0: 0.06, shape: 'cone', seed: 97 }),
+      hi: crownGeometry({ lumps: 8, detail: 1, y0: 0.06, shape: 'cone', seed: 97 }),
       lo: crownGeometry({ lumps: 1, detail: 0, y0: 0.1, shape: 'cone', seed: 101 }),
       trunk: trunkGeometry(0.2, 0.06), bark: '#5b4636',
       colors: ['#1f3324', '#233827', '#1c2f21'] },
@@ -289,15 +289,17 @@ export function buildTrees(buffer, heightAt, { chunkSize = 900, stride = 1 } = {
   }
 
   const v = new THREE.Vector3();
+  const LOD = { close: 650, near: 1500, trunks: 1300, far: Infinity, loShadow: 2500, ...lod };
   function updateLOD(camera) {
     for (const c of chunks) {
       const d = camera.position.distanceTo(v.set(c.cx, c.z, -c.cy));
-      const close = d < 650, near = d < 1500;
+      const close = d < LOD.close, near = d < LOD.near, shown = d < LOD.far;
       c.cards.visible = c.core.visible = close;
       c.hi.visible = near && !close;
-      c.lo.visible = !near;
-      c.tr.visible = d < 1300;
-      c.lo.castShadow = d < 2500;
+      c.lo.visible = !near && shown;
+      c.tr.visible = d < LOD.trunks;
+      c.lo.castShadow = d < LOD.loShadow;
+      c.hi.castShadow = d < Math.max(LOD.loShadow, LOD.close + 200);
     }
   }
   return { group, uniforms, updateLOD, count: N };

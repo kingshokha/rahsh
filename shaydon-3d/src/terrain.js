@@ -157,7 +157,7 @@ export class Terrain {
     DETAIL = DETAIL || detailTexture();
   }
 
-  build(chunksX = 4, chunksY = 4) {
+  build(chunksX = 4, chunksY = 4, { regionStep = 1 } = {}) {
     const hf = this.city;
     const ci = Math.ceil((hf.nx - 1) / chunksX), cj = Math.ceil((hf.ny - 1) / chunksY);
     for (let cy = 0; cy < chunksY; cy++) {
@@ -182,7 +182,8 @@ export class Terrain {
     // Triangles fully inside the town are dropped; border triangles take the
     // town's heights (minus a little) so the two meshes meet without a step.
     const r = this.region, c = this.city;
-    const geo = gridGeometry(r, 0, 0, r.nx, r.ny, {
+    const geo = gridGeometry(r, 0, 0, Math.floor((r.nx - 1) / regionStep) + 1, Math.floor((r.ny - 1) / regionStep) + 1, {
+      step: regionStep,
       heightFn: (x, y, h) => (c.inside(x, y) ? c.sample(x, y) - 1.5 : h),
     });
     const loc = geo.userData.local, idx = geo.index.array, keep = [];
@@ -230,6 +231,38 @@ export class Terrain {
       this.regionMesh.material.map = regTex;
       this.regionMesh.material.needsUpdate = true;
     }
+  }
+
+  /**
+   * Refine only the nearest chunk still at low resolution, if it lies within
+   * `radius` metres of (x, y).  Used while driving: one texture at a time keeps
+   * the uploads from stalling frames.  Resolves true if a chunk was refined.
+   */
+  async refineNearest(x, y, zoom = 17, radius = 1200) {
+    if (this.busy) return false;
+    let best = null, bd = radius;
+    for (const ch of this.chunks) {
+      if (ch.userData.level >= zoom) continue;
+      const r = ch.userData.rect;
+      const d = Math.hypot(Math.max(r.x0 - x, 0, x - r.x1), Math.max(r.y0 - y, 0, y - r.y1));
+      if (d <= bd) { bd = d; best = ch; }
+    }
+    if (!best) return false;
+    this.busy = true;
+    try {
+      const win = tileWindow(best.userData.rect, zoom);
+      const tex = await composeTexture(win, this.loader, this.renderer, 0);
+      if (tex) {
+        this.renderer.initTexture(tex);
+        setUVs(best.geometry, win);
+        best.material.map = tex;
+        best.material.needsUpdate = true;
+      }
+      best.userData.level = zoom;
+    } finally {
+      this.busy = false;
+    }
+    return true;
   }
 
   /** Progressive refinement: z17 (~0.9 m/px) per town chunk, z13 for the region. */

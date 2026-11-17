@@ -36,18 +36,27 @@
     padding: 8px 14px; text-align: right; font-variant-numeric: tabular-nums; }
   #speed b { font-size: 34px; font-weight: 650; line-height: 1; display: block; }
   #speed span { color: var(--muted); font-size: 11px; letter-spacing: .08em; }
-  #help { position: absolute; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  #help { position: absolute; left: 50%; bottom: calc(30px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
     font-size: 12.5px; color: rgba(255,255,255,.85); text-shadow: 0 1px 3px rgba(0,0,0,.8); white-space: nowrap; }
-  #attrib { position: absolute; left: 8px; bottom: calc(4px + env(safe-area-inset-bottom, 0px)); font-size: 9.5px;
-    color: rgba(255,255,255,.6); text-shadow: 0 1px 2px #000; max-width: 55vw; pointer-events: none; }
+  #attrib { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(2px + env(safe-area-inset-bottom, 0px));
+    font-size: 9px; text-align: center; color: rgba(255,255,255,.6); text-shadow: 0 1px 2px #000; max-width: 60vw; pointer-events: none; }
+  #minimap { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); bottom: calc(26px + env(safe-area-inset-bottom, 0px));
+    width: 180px; height: 180px; border-radius: 50%; box-shadow: 0 4px 18px rgba(0,0,0,.35), 0 0 0 3px rgba(255,255,255,.85); }
+  #bigmap { position: absolute; inset: 0; z-index: 4; background: rgba(10,12,14,.55); display: grid; place-items: center;
+    padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+  #bigmap[hidden] { display: none; }
+  #bigmapcanvas { width: min(100%, 1100px); height: 100%; max-height: 900px; border-radius: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+  #bigmap .hint { position: absolute; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
+    background: rgba(16,20,24,.75); padding: 6px 12px; border-radius: 8px; font-size: 12.5px; }
   #pads { display: none; }
   body.touch #pads { display: block; }
   body.touch #help { display: none; }
   body.touch #speed { bottom: auto; right: auto; left: 50%; transform: translateX(-50%);
     top: calc(12px + env(safe-area-inset-top, 0px)); padding: 4px 12px; text-align: center; }
   body.touch #speed b { font-size: 24px; }
+  body.touch #minimap { width: 120px; height: 120px; bottom: auto; top: calc(12px + env(safe-area-inset-top, 0px)); }
   body.touch #attrib { left: 50%; transform: translateX(-50%); text-align: center; max-width: 42vw; font-size: 8px; }
-  @media (max-width: 900px) { body.touch #title { display: none; } }
+  body.touch #title { display: none; }
   .pad { position: absolute; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 12px; }
   .pad.l { left: calc(18px + env(safe-area-inset-left, 0px)); }
   .pad.r { right: calc(18px + env(safe-area-inset-right, 0px)); flex-direction: column-reverse; }
@@ -74,14 +83,17 @@
 <div id="menu" class="panel">
   <label>Время <input id="time" type="range" min="5.5" max="21" step="0.05" value="16"><span id="timeval">16:00</span></label>
   <button id="cam" type="button">Камера: Сзади</button>
+  <button id="mapbtn" type="button">Карта (M)</button>
   <button id="reset" type="button">В начало</button>
 </div>
 <div id="speed" class="panel"><b>0</b><span>КМ/Ч</span></div>
-<div id="help">↑ ↓ или W S — газ и тормоз · ← → или A D — руль · пробел — ручник · C — камера · R — в начало</div>
+<div id="help">↑ ↓ или W S — газ и тормоз · ← → или A D — руль · пробел — ручник · C — камера · M — карта · R — в начало</div>
 <div id="pads">
   <div class="pad l"><button data-touch="left" aria-label="Влево">◀</button><button data-touch="right" aria-label="Вправо">▶</button></div>
   <div class="pad r"><button data-touch="down" aria-label="Тормоз и задний ход">▼</button><button data-touch="up" aria-label="Газ">▲</button></div>
 </div>
+<canvas id="minimap" aria-label="Мини-карта"></canvas>
+<div id="bigmap" hidden><canvas id="bigmapcanvas"></canvas><div class="hint">M или нажмите, чтобы закрыть</div></div>
 <div id="attrib"></div>
 <div id="loader"><div><h2>Загрузка…</h2><div id="status">Данные карты…</div></div></div>
 <script type="module" src="src/drive.js"></script>

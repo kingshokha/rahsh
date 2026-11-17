@@ -9,6 +9,7 @@ import { buildBuildings } from './buildings.js';
 import { buildTrees } from './trees.js';
 import { buildFeatures } from './features.js';
 import { buildCarModel, buildingIndex, Car } from './car.js';
+import { buildMapCanvas, MiniMap, BigMap } from './map.js';
 
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -19,11 +20,14 @@ const CAPTURE = params.has('capture');
 
 // ------------------------------------------------------------------ renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: CAPTURE });
-renderer.setPixelRatio(Math.min(devicePixelRatio, isPhone ? 1.5 : 2));
+const MAX_PR = Math.min(devicePixelRatio, isPhone ? 1.25 : 1.5);
+let pixelRatio = MAX_PR;
+renderer.setPixelRatio(pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false; // refreshed every other frame in step()
 $('#app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -43,6 +47,7 @@ Object.assign(su.turbidity, { value: 4.5 }); su.rayleigh.value = 1.25; su.mieCoe
 const sun = new THREE.DirectionalLight(0xffffff, 3.2);
 sun.castShadow = true;
 sun.shadow.mapSize.setScalar(isPhone ? 1024 : 2048);
+sun.shadow.radius = 2;
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.4;
 Object.assign(sun.shadow.camera, { left: -110, right: 110, top: 110, bottom: -110, near: 10, far: 6000 });
@@ -94,6 +99,8 @@ addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'KeyC') nextCamera();
   if (e.code === 'KeyR') respawn();
+  if (e.code === 'KeyM') toggleMap();
+  if (e.code === 'Escape' && mapOpen) toggleMap();
   if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -133,6 +140,17 @@ function nextCamera() {
 }
 $('#cam').addEventListener('click', nextCamera);
 $('#reset').addEventListener('click', () => respawn());
+$('#mapbtn').addEventListener('click', () => toggleMap());
+$('#bigmap').addEventListener('click', () => toggleMap());
+
+// ------------------------------------------------------------------ maps
+let mini = null, big = null, mapOpen = false;
+function toggleMap() {
+  if (!big) return;
+  mapOpen = !mapOpen;
+  $('#bigmap').hidden = !mapOpen;
+  if (mapOpen) big.draw(car.x, car.y, car.heading, start);
+}
 $('#time').addEventListener('input', (e) => setTime(+e.target.value));
 
 // ------------------------------------------------------------------ world
@@ -183,15 +201,24 @@ async function boot() {
   await loadBakedManifest(DATA + 'imagery.json');
   const loader = new TileLoader(14);
   terrain = new Terrain(scene, renderer, cityHF, regionHF, loader);
-  terrain.build(4, 4);
+  terrain.build(4, 4, { regionStep: isPhone ? 3 : 2 }); // the far mountains need less detail from the road
   $('#status').textContent = 'Дома и деревья…';
   await new Promise(requestAnimationFrame);
   const list = isPhone ? city.buildings.filter((x) => x.h > 2.95 || x.p.length > 8) : city.buildings;
   scene.add(buildBuildings(list, heightAt).group);
-  trees = buildTrees(treeBuf, heightAt, { stride: isPhone && treeBuf.byteLength > 12 * 60000 ? 2 : 1 });
+  trees = buildTrees(treeBuf, heightAt, {
+    stride: isPhone && treeBuf.byteLength > 12 * 60000 ? 2 : 1,
+    chunkSize: 500,
+    // from the road only nearby trees need full detail; far ones are hidden behind houses and haze
+    lod: { close: 240, near: 700, trunks: 420, far: isPhone ? 1300 : 1900, loShadow: 0 },
+  });
   scene.add(trees.group);
   const features = buildFeatures(city, heightAt, { allRoads: true });
   scene.add(features.group);
+
+  const mapData = buildMapCanvas(city, cityHF);
+  mini = new MiniMap($('#minimap'), mapData);
+  big = new BigMap($('#bigmapcanvas'), mapData);
 
   const model = buildCarModel(params.get('color') || '#c62f2a');
   scene.add(model.group);
@@ -209,16 +236,34 @@ async function boot() {
   $('#loader').classList.add('done');
   window.__ready = true;
   const zoom = renderer.capabilities.maxTextureSize >= 4096 && !isPhone ? 17 : 16;
-  terrain.refine(() => ({ x: car.x, y: car.y }), zoom).then(() => { window.__refined = true; });
+  // sharpen the ground only around the car, one texture at a time
+  const refineLoop = async () => {
+    const did = await terrain.refineNearest(car.x, car.y, zoom, 900);
+    if (!did) window.__refined = true;
+    setTimeout(refineLoop, did ? 400 : 1500);
+  };
+  refineLoop();
 }
 
 // ------------------------------------------------------------------ loop
 const clock = new THREE.Clock();
 const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3();
-let lodTimer = 0;
+let lodTimer = 0, frameNo = 0, lastSpeed = -1, perfT = 0, perfN = 0;
+function adaptResolution(dt) {
+  perfT += dt; perfN++;
+  if (perfT < 1.5) return;
+  const fps = perfN / perfT;
+  perfT = 0; perfN = 0;
+  let pr = pixelRatio;
+  if (fps < 40) pr = Math.max(0.6, pr * 0.85);
+  else if (fps > 56) pr = Math.min(MAX_PR, pr + 0.1);
+  if (Math.abs(pr - pixelRatio) > 0.01) { pixelRatio = pr; renderer.setPixelRatio(pr); }
+}
 function step(dt) {
   if (!car) { renderer.render(scene, camera); return; }
-  car.update(dt, readInput());
+  frameNo++;
+  const input = readInput();
+  car.update(dt, input);
   const fwd = new THREE.Vector3(Math.sin(car.heading), 0, -Math.cos(car.heading));
   const p = car.m.group.position;
   const c = CAMS[camIdx];
@@ -244,22 +289,29 @@ function step(dt) {
   sun.position.copy(sun.target.position).addScaledVector(sunDir, 3000);
   car.m.beam.intensity = sunEl < 0.12 ? 60 : 0;
   car.m.head.emissiveIntensity = sunEl < 0.12 ? 3 : 0.4;
-  const braking = readInput().throttle < 0 && car.v > 0.5;
+  const braking = input.throttle < 0 && car.v > 0.5;
   car.m.tail.emissiveIntensity = braking ? 3 : sunEl < 0.12 ? 1.2 : 0.35;
 
   if (trees) {
     trees.uniforms.uTime.value += dt;
     if ((lodTimer -= dt) <= 0) { trees.updateLOD(camera); lodTimer = 0.3; }
   }
-  $('#speed b').textContent = Math.round(Math.abs(car.v) * 3.6);
+  const kmh = Math.round(Math.abs(car.v) * 3.6);
+  if (kmh !== lastSpeed) { $('#speed b').textContent = kmh; lastSpeed = kmh; }
+  if (big) big.record(car.x, car.y);
+  if (mini && (frameNo % 2 === 0 || CAPTURE)) mini.draw(car.x, car.y, car.heading);
+  if (mapOpen && frameNo % 10 === 0) big.draw(car.x, car.y, car.heading, start);
+  if (frameNo % 2 === 0 || CAPTURE) renderer.shadowMap.needsUpdate = true;
   renderer.render(scene, camera);
 }
 function frame() {
   requestAnimationFrame(frame);
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (!CAPTURE) step(dt);
+  if (!CAPTURE) { step(dt); adaptResolution(dt); }
 }
 // automated screenshots: drive scripted steps, then render
+window.__map = () => toggleMap();
+window.__stats = () => ({ calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, pr: pixelRatio });
 window.__drive = (seconds, input) => {
   const n = Math.round(seconds * 30);
   for (let i = 0; i < n; i++) {
