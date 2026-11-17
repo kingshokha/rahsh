@@ -1,6 +1,7 @@
 // Draped line features: asphalt main roads, irrigation canals, the Ashtsoy
 // stream and the utility poles that line the main road.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ELEV0 } from './geo.js';
 
 function resample(flat, step) {
@@ -46,11 +47,11 @@ export function ribbon(flat, width, heightAt, lift = 0.25, step = 4) {
   return { geometry: g, points: pts };
 }
 
-function asphaltTexture() {
+function asphaltTexture({ markings = true, base = '#4a4b4c' } = {}) {
   const w = 128, h = 512, c = document.createElement('canvas');
   c.width = w; c.height = h;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#4a4b4c';
+  ctx.fillStyle = base;
   ctx.fillRect(0, 0, w, h);
   const img = ctx.getImageData(0, 0, w, h);
   for (let i = 0; i < img.data.length; i += 4) {
@@ -73,11 +74,13 @@ function asphaltTexture() {
   }
   ctx.fillStyle = 'rgba(25,25,25,0.16)';
   for (const x of [0.2, 0.33, 0.67, 0.8]) ctx.fillRect(x * w - 5, 0, 10, h);
-  // faded markings: edge lines and dashed centre line (texture spans 12 m)
-  ctx.fillStyle = 'rgba(220,218,205,0.32)';
-  ctx.fillRect(4, 0, 2, h); ctx.fillRect(w - 6, 0, 2, h);
-  ctx.fillStyle = 'rgba(225,222,210,0.5)';
-  ctx.fillRect(w / 2 - 1.5, 0, 3, h * 0.4);
+  if (markings) {
+    // faded markings: edge lines and dashed centre line (texture spans 12 m)
+    ctx.fillStyle = 'rgba(220,218,205,0.32)';
+    ctx.fillRect(4, 0, 2, h); ctx.fillRect(w - 6, 0, 2, h);
+    ctx.fillStyle = 'rgba(225,222,210,0.5)';
+    ctx.fillRect(w / 2 - 1.5, 0, 3, h * 0.4);
+  }
   // dusty shoulders
   const grad = ctx.createLinearGradient(0, 0, w, 0);
   grad.addColorStop(0, 'rgba(150,135,110,0.55)'); grad.addColorStop(0.05, 'rgba(150,135,110,0)');
@@ -120,7 +123,9 @@ function waterNormals() {
   return t;
 }
 
-export function buildFeatures(city, heightAt) {
+const LOCAL_ROADS = new Set(['residential', 'living_street', 'unclassified', 'service', 'track', 'pedestrian']);
+
+export function buildFeatures(city, heightAt, { allRoads = false } = {}) {
   const group = new THREE.Group();
   const asphalt = new THREE.MeshStandardMaterial({
     map: asphaltTexture(), roughness: 0.88, metalness: 0,
@@ -135,6 +140,24 @@ export function buildFeatures(city, heightAt) {
     m.receiveShadow = true;
     group.add(m);
     mainRoads.push(rb.points);
+  }
+  if (allRoads) {
+    // worn, unmarked surface on side streets so they read clearly from a car
+    const local = new THREE.MeshStandardMaterial({
+      map: asphaltTexture({ markings: false, base: '#56524b' }), roughness: 0.93, metalness: 0,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
+    });
+    const parts = [];
+    for (const r of city.roads) {
+      if (!LOCAL_ROADS.has(r.type)) continue;
+      const rb = ribbon(r.p, Math.max(r.w, 4), heightAt, 0.16, 4);
+      if (rb) parts.push(rb.geometry);
+    }
+    if (parts.length) {
+      const m = new THREE.Mesh(mergeGeometries(parts), local);
+      m.receiveShadow = true;
+      group.add(m);
+    }
   }
 
   const wn = waterNormals();

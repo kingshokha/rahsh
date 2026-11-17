@@ -56,6 +56,15 @@ the time of day (real sun position for Shaydon in June). URL parameters:
 `?city=shaydon|khujand|barnaul`, `&view=<id>` (a preset view from `tools/cities.json`),
 `&t=18.5` (hour), `&noao` (disable ambient occlusion on slow GPUs).
 
+## Driving
+
+`drive.html` turns any city into a free-roam drive: a small car with arcade
+handling follows the real relief, every OSM street gets a road surface, and the
+car stops against building walls. Arrow keys or WASD drive, Space is the
+handbrake, C switches camera, R returns to the start; on phones on-screen
+buttons appear. Use `drive.html?city=khujand` (or `barnaul`) for the other
+cities and `&t=20` for an evening drive with headlights.
+
 ## Rebuilding the data
 
 ```sh
