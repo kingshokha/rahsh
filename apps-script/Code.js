@@ -40,11 +40,38 @@ const OCOL = { NUM: 1, DATE: 2, STATUS: 3, NAME: 4, PHONE: 5, DELIVERY: 6, ADDRE
 
 /* ───────────── Сайт ───────────── */
 
-function doGet() {
+/**
+ * Старая ссылка …/exec открывает магазин как раньше.
+ * …/exec?api=shop — каталог в JSON для страницы магазина на GitHub (kingshokha.github.io/rahsh).
+ */
+function doGet(e) {
+  const q = (e && e.parameter) || {};
+  if (q.api) {
+    return json_(() => {
+      if (q.api !== 'shop') throw new Error('Неизвестный запрос');
+      return shopCached_();
+    });
+  }
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle(CONFIG.SHOP_NAME)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/** Запросы страницы магазина с GitHub: тело — JSON {action, payload, key}, ответ — {ok, data} или {ok:false, error}. */
+function doPost(e) {
+  return json_(() => {
+    let body;
+    try { body = JSON.parse((e && e.postData && e.postData.contents) || ''); } catch (err) { throw new Error('Неверный запрос'); }
+    return api(body.action, body.payload, body.key);
+  });
+}
+
+function json_(fn) {
+  let out;
+  try { out = { ok: true, data: fn() }; }
+  catch (err) { out = { ok: false, error: String((err && err.message) || err) }; }
+  return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
 
 /** Пароль панели продавца хранится в свойствах скрипта, а не в коде: Настройки проекта → Свойства скрипта → ADMIN_PASSWORD. */
@@ -57,7 +84,7 @@ function api(action, payload, key) {
   payload = payload || {};
   switch (action) {
     // для покупателей
-    case 'shop':  return shop_();
+    case 'shop':  return shopCached_();
     case 'order': return placeOrder_(payload);
   }
   // дальше — только для продавца
@@ -68,8 +95,8 @@ function api(action, payload, key) {
     case 'admin':          return admin_();
     case 'uploadPhoto':    return uploadPhoto_(payload);
     case 'trashPhotos':    return trashPhotos_(payload.ids);
-    case 'saveProduct':    return withLock_(() => saveProduct_(payload));
-    case 'deleteProduct':  return withLock_(() => deleteProduct_(payload.id));
+    case 'saveProduct':    return catalogChanged_(withLock_(() => saveProduct_(payload)));
+    case 'deleteProduct':  return catalogChanged_(withLock_(() => deleteProduct_(payload.id)));
     case 'setOrderStatus': return withLock_(() => setOrderStatus_(payload.number, payload.status));
     default: throw new Error('Неизвестное действие: ' + action);
   }
@@ -131,6 +158,49 @@ function shopInfo_() {
     currency: CONFIG.CURRENCY,
     delivery: CONFIG.DELIVERY_OPTIONS,
   };
+}
+
+/* Каталог в кэше Apps Script: витрина не читает таблицу при каждом заходе.
+   Сбрасывается при сохранении/удалении товара в панели и при правке таблицы вручную; иначе живёт 5 минут. */
+const SHOP_CACHE_KEY = 'shop_v1';
+const SHOP_CACHE_TTL = 300;          // секунд
+const SHOP_CACHE_CHUNK = 40000;      // символов в одной записи кэша (лимит записи — 100 КБ)
+
+function shopCached_() {
+  const cache = CacheService.getScriptCache();
+  try {
+    const n = Number(cache.get(SHOP_CACHE_KEY));
+    if (n > 0) {
+      const keys = [];
+      for (let i = 0; i < n; i++) keys.push(SHOP_CACHE_KEY + '_' + i);
+      const parts = cache.getAll(keys);
+      if (keys.every(k => parts[k] != null)) return JSON.parse(keys.map(k => parts[k]).join(''));
+    }
+  } catch (e) {}
+  const data = shop_();
+  try {
+    const text = JSON.stringify(data);
+    const chunks = {};
+    let n = 0;
+    for (let i = 0; i < text.length; i += SHOP_CACHE_CHUNK) chunks[SHOP_CACHE_KEY + '_' + (n++)] = text.slice(i, i + SHOP_CACHE_CHUNK);
+    cache.putAll(chunks, SHOP_CACHE_TTL);
+    cache.put(SHOP_CACHE_KEY, String(n), SHOP_CACHE_TTL);
+  } catch (e) {}
+  return data;
+}
+
+function clearShopCache_() {
+  try { CacheService.getScriptCache().remove(SHOP_CACHE_KEY); } catch (e) {}
+}
+
+function catalogChanged_(result) {
+  clearShopCache_();
+  return result;
+}
+
+/** Правка таблицы вручную — сбросить кэш, чтобы сайт сразу показал изменения (работает, если скрипт привязан к таблице). */
+function onEdit() {
+  clearShopCache_();
 }
 
 function placeOrder_(p) {
@@ -284,15 +354,17 @@ function saveProduct_(p) {
   const sh = getProductsSheet_();
 
   let row = 0, id, created, oldIds = [];
-  if (p.id) {
-    row = findRow_(sh, p.id);
+  // Повторная отправка нового товара (связь оборвалась, а запись уже прошла) — обновляем ту же строку, без дубля
+  const retryRow = !p.id && validNewId_(p.newId) ? findRow_(sh, p.newId) : 0;
+  if (p.id || retryRow) {
+    row = retryRow || findRow_(sh, p.id);
     if (!row) throw new Error('Товар не найден — возможно, его удалили из таблицы');
     const cur = sh.getRange(row, 1, 1, HEADERS.length).getValues()[0];
     id = String(cur[COL.ID - 1]);
     created = cur[COL.DATE - 1] || new Date();
     oldIds = splitIds_(cur[COL.FILE_IDS - 1]);
   } else {
-    id = newId_();
+    id = validNewId_(p.newId) ? String(p.newId) : newId_();
     created = new Date();
   }
 
@@ -616,6 +688,10 @@ function clean_(v, multiline) {
 function safeText_(s) {
   s = String(s == null ? '' : s);
   return /^[=+\-@]/.test(s) ? "'" + s : s;
+}
+
+function validNewId_(v) {
+  return /^T-[A-Z0-9]{6,30}$/.test(String(v || ''));
 }
 
 function newId_() {
