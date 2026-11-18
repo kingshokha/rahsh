@@ -133,6 +133,14 @@
   .thumbs button{flex:none;width:64px;aspect-ratio:3/4;padding:0;border:2px solid transparent;border-radius:10px;overflow:hidden;background:var(--surface-2);cursor:pointer}
   .thumbs button.on{border-color:var(--text)}
   .thumbs img{width:100%;height:100%;object-fit:cover;display:block}
+  /* склейка: варианты товара на его странице */
+  .variants{display:grid;gap:8px}
+  .variants-row{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:2px}
+  .variants-row::-webkit-scrollbar{display:none}
+  .variant{flex:none;width:64px;aspect-ratio:3/4;border-radius:10px;overflow:hidden;border:2px solid var(--line);background:var(--surface-2);display:block}
+  .variant img,.variant .noimg{width:100%;height:100%;object-fit:contain;display:block;font-size:10px}
+  .variant:hover{border-color:var(--muted)}
+  .variant.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
   @media (max-width:859px){.thumbs{display:none}}
   @media (min-width:860px){.dots{display:none}}
   .info{display:flex;flex-direction:column;gap:16px}
@@ -207,6 +215,7 @@
   .row-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .row-sub{font-size:13px;color:var(--muted)}
   .row-price{font-weight:700;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .pill.glued{background:var(--accent-soft);color:var(--accent)}
   .pill{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--warn-soft);color:var(--warn);margin-left:6px;vertical-align:middle}
   .order{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;display:grid;gap:10px}
   .order-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -231,6 +240,17 @@
   .add-ph b{font-size:28px;font-weight:300;line-height:1}
   .add-ph:hover{border-color:var(--accent);color:var(--accent)}
   .check-row{display:flex;gap:10px;align-items:center;cursor:pointer}
+  /* склейка в панели продавца */
+  .links{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+  .link-item{position:relative;display:flex;flex-direction:column;gap:4px;padding:6px;border:1.5px solid var(--line);border-radius:10px;background:var(--surface-2);cursor:pointer;text-align:left;font-size:12px;line-height:1.25;color:var(--text)}
+  .link-item .lt{aspect-ratio:3/4;border-radius:7px;overflow:hidden;background:var(--surface)}
+  .link-item .lt img,.link-item .lt .noimg{width:100%;height:100%;object-fit:contain;display:block;font-size:10px}
+  .link-item .nm{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .link-item .pr{color:var(--muted);font-variant-numeric:tabular-nums}
+  .link-item .other{color:var(--warn);font-size:11px}
+  .link-item .ck{position:absolute;top:10px;right:10px;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:none;align-items:center;justify-content:center;font-size:13px;font-weight:800}
+  .link-item[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+  .link-item[aria-pressed="true"] .ck{display:flex}
   .check-row input{width:18px;height:18px;accent-color:var(--accent)}
   .stack{display:grid;gap:14px}
 
@@ -613,15 +633,24 @@ function renderProduct(id) {
     d ? h('s', { class: 'old' }, money(p.oldPrice)) : null,
     d ? h('span', { class: 'save' }, `Выгода ${money(p.oldPrice - p.price)}`) : null);
 
+  // склейка: другие варианты товара (цвета и т. п.) — миниатюрами под ценой
+  const variants = p.group ? S.products.filter(x => x.group === p.group) : [];
+  const variantsBox = variants.length > 1 ? h('div', { class: 'variants' },
+    h('div', { class: 'label' }, `Варианты: ${variants.length}`),
+    h('div', { class: 'variants-row' }, variants.map(x => h('a', {
+      class: 'variant' + (x.id === p.id ? ' on' : ''), href: '#/p/' + encodeURIComponent(x.id),
+      title: x.name, 'aria-label': x.name, 'aria-current': x.id === p.id ? 'true' : null,
+    }, img(x.photos[0] && sized(x.photos[0].url, 200), x.name))))) : null;
+
   const inCart = cartQty(p.id) > 0;
-  const buybox = h('div', { class: 'buybox' }, priceRow, buyControl(p, true),
+  const buybox = h('div', { class: 'buybox' }, priceRow, variantsBox, buyControl(p, true),
     inCart ? h('a', { class: 'btn btn-block', href: '#/cart' }, 'Перейти в корзину') : null,
     h('ul', { class: 'facts' },
       S.shop.delivery.map(o => h('li', { html: (/самовывоз/i.test(o) ? ICON.store : ICON.truck) + '<span></span>' })),
       h('li', { html: ICON.chat + '<span>После заказа продавец свяжется с вами для подтверждения</span>' })));
   buybox.querySelectorAll('.facts li span').forEach((s, i) => { if (S.shop.delivery[i]) s.textContent = S.shop.delivery[i]; });
 
-  const similar = S.products.filter(x => x.category === p.category && x.id !== p.id).slice(0, 8);
+  const similar = S.products.filter(x => x.category === p.category && x.id !== p.id && !(p.group && x.group === p.group)).slice(0, 8);
   const buybar = h('div', { class: 'buybar' },
     h('div', null, h('div', { class: 'price' + (d ? ' is-sale' : '') }, money(p.price)), d ? h('s', { class: 'old' }, money(p.oldPrice)) : null),
     h('div', null, inCart ? h('a', { class: 'btn btn-primary btn-block', href: '#/cart' }, `В корзине ${cartQty(p.id)} шт · Оформить`) : buyControl(p, true)));
@@ -815,11 +844,14 @@ function adminProducts(D) {
   const rows = () => {
     const ql = S.admin.q.trim().toLowerCase();
     const items = D.products.filter(p => !ql || (p.name + ' ' + p.sku + ' ' + p.category).toLowerCase().includes(ql));
+    const groupSize = {};
+    D.products.forEach(p => { if (p.group) groupSize[p.group] = (groupSize[p.group] || 0) + 1; });
     return h('div', { class: 'rows', id: 'adminRows' },
       items.length ? items.map(p => h('button', { class: 'row', type: 'button', onclick: () => go('#/admin/edit/' + encodeURIComponent(p.id)) },
         h('div', { class: 'thumb' }, p.photos[0] ? img(sized(p.photos[0].url, 200), '') : null),
         h('div', { style: 'min-width:0' },
-          h('div', { class: 'row-name' }, p.name, !p.visible ? h('span', { class: 'pill' }, 'скрыт') : null),
+          h('div', { class: 'row-name' }, p.name, !p.visible ? h('span', { class: 'pill' }, 'скрыт') : null,
+            groupSize[p.group] > 1 ? h('span', { class: 'pill glued', title: 'Склеен с другими товарами' }, `склейка · ${groupSize[p.group]}`) : null),
           h('div', { class: 'row-sub' }, [p.category, p.sku].filter(Boolean).join(' · '))),
         h('div', { class: 'row-price' }, money(p.price), p.oldPrice > p.price ? h('div', { class: 'row-sub' }, h('s', null, money(p.oldPrice))) : null)))
         : h('div', { class: 'empty' }, D.products.length ? 'Ничего не найдено' : h('span', null, h('b', null, 'Товаров пока нет'), h('a', { class: 'btn btn-primary', href: '#/admin/new', style: 'margin-top:10px' }, 'Добавить первый товар'))));
@@ -863,6 +895,8 @@ function adminForm(D, id) {
       id: p ? p.id : null,
       newId: p ? null : 'T-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 6).toUpperCase(),
       photos: p ? p.photos.map(ph => ({ kind: 'saved', id: ph.id, url: ph.url })) : [],
+      links: new Set(p && p.group ? D.products.filter(x => x.group === p.group && x.id !== p.id).map(x => x.id) : []),
+      linksTouched: false,
       confirmDelete: false,
     };
   }
@@ -871,7 +905,7 @@ function adminForm(D, id) {
   if (p && p.category && !cats.includes(p.category)) cats.push(p.category);
   const field = (fid, label, input, req) => h('div', { class: 'field' }, h('label', { class: 'label' + (req ? ' req' : ''), for: fid }, label), input);
 
-  const catSel = h('select', { class: 'select', id: 'f_cat', onchange: () => { newCat.hidden = catSel.value !== '__new__'; if (!newCat.hidden) newCat.focus(); } },
+  const catSel = h('select', { class: 'select', id: 'f_cat', onchange: () => { newCat.hidden = catSel.value !== '__new__'; if (!newCat.hidden) newCat.focus(); renderLinks(); } },
     h('option', { value: '' }, 'Выберите категорию'), cats.map(c => h('option', { value: c }, c)), h('option', { value: '__new__' }, '+ Новая категория…'));
   catSel.value = p ? p.category : (store.get('shop_last_cat', '') && cats.includes(store.get('shop_last_cat', '')) ? store.get('shop_last_cat', '') : '');
   const newCat = h('input', { class: 'input', id: 'f_newcat', maxlength: 80, placeholder: 'Название новой категории', style: 'margin-top:8px', hidden: true });
@@ -894,6 +928,31 @@ function adminForm(D, id) {
   photosBox.addEventListener('dragleave', () => photosBox.classList.remove('drag'));
   photosBox.addEventListener('drop', e => { e.preventDefault(); photosBox.classList.remove('drag'); addFiles(e.dataTransfer.files); });
 
+  // склейка: товары той же категории, которые показываются на странице товара как варианты
+  const linksBox = h('div', { class: 'links', id: 'f_links' });
+  const linksNote = h('div', { class: 'note' });
+  const renderLinks = () => {
+    const cat = catSel.value === '__new__' ? '' : catSel.value;
+    const myGroup = p && p.group;
+    const cands = cat ? D.products.filter(x => x.id !== (p && p.id) && x.category.toLowerCase() === cat.toLowerCase()) : [];
+    if (!cat) { linksBox.replaceChildren(); linksNote.textContent = 'Сначала выберите категорию — склеить можно только товары из одной категории.'; return; }
+    if (!cands.length) { linksBox.replaceChildren(); linksNote.textContent = `В категории «${cat}» пока нет других товаров.`; return; }
+    const chosen = cands.filter(x => F.links.has(x.id)).length;
+    linksNote.textContent = chosen
+      ? `Выбрано: ${chosen}. На странице товара они будут рядом миниатюрами, как варианты.`
+      : 'Отметьте товары-варианты (например, другие цвета). Они будут показываться друг у друга под ценой.';
+    linksBox.replaceChildren(...cands.map(x => h('button', {
+      type: 'button', class: 'link-item', 'aria-pressed': String(F.links.has(x.id)), title: x.name,
+      onclick: () => { F.links.has(x.id) ? F.links.delete(x.id) : F.links.add(x.id); F.linksTouched = true; renderLinks(); },
+    },
+      h('span', { class: 'ck', 'aria-hidden': 'true' }, '✓'),
+      h('span', { class: 'lt' }, img(x.photos[0] && sized(x.photos[0].url, 200), '')),
+      h('span', { class: 'nm' }, x.name),
+      h('span', { class: 'pr' }, money(x.price)),
+      x.group && x.group !== myGroup && !F.links.has(x.id) ? h('span', { class: 'other' }, 'в другой склейке') : null)));
+  };
+  renderLinks();
+
   const status = h('div', { class: 'note', id: 'f_status', style: 'text-align:center;min-height:18px', 'aria-live': 'polite' });
   const saveBtn = h('button', { class: 'btn btn-primary btn-lg btn-block', type: 'submit', id: 'f_save' }, p ? 'Сохранить изменения' : 'Добавить товар');
   const delBtn = p ? h('button', { class: 'btn btn-danger btn-block', type: 'button', id: 'f_del', onclick: () => deleteProduct(p.id) }, 'Удалить товар') : null;
@@ -912,6 +971,7 @@ function adminForm(D, id) {
           field('f_old', 'Старая цена', h('input', { class: 'input', id: 'f_old', inputmode: 'decimal', value: p && p.oldPrice ? String(p.oldPrice) : '', placeholder: 'для скидки' }))),
         field('f_sku', 'Артикул', h('input', { class: 'input', id: 'f_sku', maxlength: 100, value: p ? p.sku : '' })),
         field('f_desc', 'Описание', h('textarea', { class: 'textarea', id: 'f_desc', maxlength: 5000, style: 'min-height:120px', value: p ? p.description : '', placeholder: 'Состав, размеры, особенности' })),
+        h('div', { class: 'field' }, h('span', { class: 'label' }, 'Склейка с другими товарами'), linksNote, linksBox),
         h('label', { class: 'check-row' }, h('input', { type: 'checkbox', id: 'f_visible', checked: p ? p.visible : true }), 'Показывать на витрине'),
         saveBtn, status, delBtn)));
 }
@@ -1012,6 +1072,13 @@ async function saveProduct(e) {
     description: $('f_desc').value.trim(),
     visible: $('f_visible').checked,
   };
+  const orig = F.id && S.admin.data ? S.admin.data.products.find(x => x.id === F.id) : null;
+  if (F.linksTouched || (orig && orig.group && orig.category !== category)) {
+    data.links = [...F.links].filter(lid => {
+      const x = S.admin.data.products.find(y => y.id === lid);
+      return x && x.category.toLowerCase() === String(category).toLowerCase();
+    });
+  }
   const errs = [];
   if (!data.name) errs.push(['f_name', 'Укажите название']);
   if (!category) errs.push([isNewCat ? 'f_newcat' : 'f_cat', isNewCat ? 'Введите название категории' : 'Выберите категорию']);
@@ -1044,6 +1111,7 @@ async function saveProduct(e) {
     const D = S.admin.data;
     const i = D.products.findIndex(x => x.id === saved.id);
     if (i >= 0) D.products[i] = saved; else D.products.unshift(saved);
+    if (saved.groups) D.products.forEach(x => { if (x.id in saved.groups) x.group = saved.groups[x.id]; });
     if (!D.categories.some(c => c.toLowerCase() === saved.category.toLowerCase())) D.categories.push(saved.category);
     store.set('shop_last_cat', saved.category);
     S.loaded && refreshShopSoon();
@@ -1120,6 +1188,9 @@ const demoApi = (() => {
     P('d4', 'Плед вязаный 130×170', 'Для дома', 2450, 0, [['#e7dfe9', '#7b5a86'], ['#efe2d6', '#a3683f']], 'PD-130', 'Акрил, мягкий, не линяет.'),
     P('d5', 'Беспроводные наушники', 'Электроника', 2790, 3290, [['#dde3e6', '#3e4a52']], 'HP-07', 'До 24 часов работы с кейсом.'),
     P('d6', 'Футболка базовая оверсайз', 'Одежда', 990, 0, [['#ececea', '#666']], 'TS-100', ''),
+    Object.assign(P('d7', 'Зажигалка электронная, зелёная', 'Аксессуары', 870, 2294, [['#dff0e2', '#3f8a52']], 'ZG-01', 'USB-кабель в комплекте.'), { group: 'G-DEMO' }),
+    Object.assign(P('d8', 'Зажигалка электронная, оранжевая', 'Аксессуары', 870, 2294, [['#fbe6d6', '#c8662a']], 'ZG-02', 'USB-кабель в комплекте.'), { group: 'G-DEMO' }),
+    Object.assign(P('d9', 'Зажигалка электронная, синяя', 'Аксессуары', 870, 2294, [['#dde6f5', '#3a5fa8']], 'ZG-03', 'USB-кабель в комплекте.'), { group: 'G-DEMO' }),
   ];
   const cats = ['Одежда', 'Обувь', 'Аксессуары', 'Для дома', 'Электроника', 'Другое'];
   const orders = [];
@@ -1153,7 +1224,18 @@ const demoApi = (() => {
         const prod = { id: p.id || p.newId || 'T' + Date.now(), date: old ? old.date : new Date().toISOString(), name: p.name, category: cat, price: p.price,
           oldPrice: p.oldPrice && p.oldPrice > p.price ? p.oldPrice : 0, sku: p.sku, description: p.description, visible: p.visible,
           photos: p.photoIds.map(id => ({ id, url: files[id] || (allPh.find(x => x.id === id) || {}).url })) };
+        prod.group = old ? old.group || '' : '';
         products = old ? products.map(x => x.id === prod.id ? prod : x) : [prod, ...products];
+        if (Array.isArray(p.links)) {
+          const gid = prod.group || 'G' + Date.now();
+          const want = new Set(p.links.filter(id => (products.find(x => x.id === id) || {}).category === cat));
+          products.forEach(x => { if (x.group === gid && x.id !== prod.id && !want.has(x.id)) x.group = ''; });
+          prod.group = want.size ? gid : '';
+          products.forEach(x => { if (want.has(x.id)) x.group = gid; });
+          const cnt = {}; products.forEach(x => { if (x.group) cnt[x.group] = (cnt[x.group] || 0) + 1; });
+          products.forEach(x => { if (x.group && cnt[x.group] < 2) x.group = ''; });
+          prod.groups = Object.fromEntries(products.map(x => [x.id, x.group || '']));
+        }
         return prod;
       }
       case 'deleteProduct': products = products.filter(x => x.id !== p.id); return { ok: true };

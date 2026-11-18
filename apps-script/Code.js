@@ -30,8 +30,8 @@ const CONFIG = {
   ],
 };
 
-const HEADERS = ['ID', 'Добавлен', 'Изменён', 'Фото', 'Название', 'Категория', 'Цена', 'Старая цена', 'Артикул', 'Описание', 'На витрине', 'Ссылки на фото', 'ID файлов'];
-const COL = { ID: 1, DATE: 2, UPDATED: 3, PHOTO: 4, NAME: 5, CATEGORY: 6, PRICE: 7, OLD_PRICE: 8, SKU: 9, DESC: 10, VISIBLE: 11, URLS: 12, FILE_IDS: 13 };
+const HEADERS = ['ID', 'Добавлен', 'Изменён', 'Фото', 'Название', 'Категория', 'Цена', 'Старая цена', 'Артикул', 'Описание', 'На витрине', 'Ссылки на фото', 'ID файлов', 'Склейка'];
+const COL = { ID: 1, DATE: 2, UPDATED: 3, PHOTO: 4, NAME: 5, CATEGORY: 6, PRICE: 7, OLD_PRICE: 8, SKU: 9, DESC: 10, VISIBLE: 11, URLS: 12, FILE_IDS: 13, GROUP: 14 };
 const MONEY_FORMAT = '#,##0.00 "' + CONFIG.CURRENCY + '"';
 const TEXT_COLS = [COL.NAME, COL.CATEGORY, COL.SKU, COL.DESC];
 
@@ -353,7 +353,7 @@ function saveProduct_(p) {
   const urls = photoIds.map(id => photoUrl_(id));
   const sh = getProductsSheet_();
 
-  let row = 0, id, created, oldIds = [];
+  let row = 0, id, created, oldIds = [], group = '';
   // Повторная отправка нового товара (связь оборвалась, а запись уже прошла) — обновляем ту же строку, без дубля
   const retryRow = !p.id && validNewId_(p.newId) ? findRow_(sh, p.newId) : 0;
   if (p.id || retryRow) {
@@ -363,6 +363,7 @@ function saveProduct_(p) {
     id = String(cur[COL.ID - 1]);
     created = cur[COL.DATE - 1] || new Date();
     oldIds = splitIds_(cur[COL.FILE_IDS - 1]);
+    group = String(cur[COL.GROUP - 1] || '').trim();
   } else {
     id = validNewId_(p.newId) ? String(p.newId) : newId_();
     created = new Date();
@@ -382,6 +383,7 @@ function saveProduct_(p) {
     p.visible !== false,
     urls.join('\n'),
     photoIds.join(','),
+    group,
   ];
   const toWrite = record.map((v, i) => TEXT_COLS.indexOf(i + 1) >= 0 ? safeText_(v) : v);
 
@@ -394,7 +396,63 @@ function saveProduct_(p) {
   sh.setRowHeight(row, 90);
 
   oldIds.filter(x => photoIds.indexOf(x) === -1).forEach(trashFile_); // убранные фото — в корзину Диска
-  return rowToProduct_(record);
+
+  const saved = rowToProduct_(record);
+  if (Array.isArray(p.links)) {
+    saved.groups = linkProducts_(sh, id, category, p.links); // склейка: id → группа для всех товаров
+    saved.group = saved.groups[id] || '';
+  }
+  return saved;
+}
+
+/**
+ * Склейка: товар id и товары links (только из той же категории) получают общую группу —
+ * на странице товара они показываются рядом миниатюрами, как варианты.
+ * Убранные из склейки товары из группы выходят; группа из одного товара снимается.
+ * Меняется только колонка «Склейка», остальные данные не трогаются.
+ */
+function linkProducts_(sh, id, category, links) {
+  const last = sh.getLastRow();
+  const n = last - 1;
+  const ids = sh.getRange(2, COL.ID, n, 1).getDisplayValues().map(r => String(r[0]).trim());
+  const cats = sh.getRange(2, COL.CATEGORY, n, 1).getDisplayValues().map(r => String(r[0]).trim().toLowerCase());
+  const groups = sh.getRange(2, COL.GROUP, n, 1).getDisplayValues().map(r => String(r[0]).trim());
+  const before = groups.slice();
+  const me = ids.indexOf(String(id));
+  if (me < 0) throw new Error('Товар не найден');
+
+  const cat = String(category).trim().toLowerCase();
+  const want = {};
+  (links || []).map(String).forEach(x => {
+    const i = ids.indexOf(x);
+    if (i >= 0 && i !== me && cats[i] === cat) want[i] = true; // только та же категория
+  });
+  const members = Object.keys(want).map(Number);
+
+  const gid = groups[me] || newGroupId_();
+  if (members.length) {
+    groups.forEach((g, i) => { if (g === gid && i !== me && !want[i]) groups[i] = ''; }); // вышли из склейки
+    groups[me] = gid;
+    members.forEach(i => { groups[i] = gid; });
+  } else {
+    groups[me] = ''; // склейка снята
+  }
+
+  // группа, в которой остался один товар, не нужна
+  const count = {};
+  groups.forEach(g => { if (g) count[g] = (count[g] || 0) + 1; });
+  groups.forEach((g, i) => { if (g && count[g] < 2) groups[i] = ''; });
+
+  if (groups.some((g, i) => g !== before[i])) {
+    sh.getRange(2, COL.GROUP, n, 1).setValues(groups.map(g => [g]));
+  }
+  const out = {};
+  ids.forEach((x, i) => { if (x) out[x] = groups[i]; });
+  return out;
+}
+
+function newGroupId_() {
+  return 'G-' + Date.now().toString(36).toUpperCase() + Math.floor(Math.random() * 1296).toString(36).toUpperCase();
 }
 
 function deleteProduct_(id) {
@@ -453,6 +511,7 @@ function rowToProduct_(r) {
     description: String(r[COL.DESC - 1] || ''),
     visible: !(vis === false || /^(false|нет|no|0)$/i.test(String(vis).trim())),
     photos: splitIds_(r[COL.FILE_IDS - 1]).map(id => ({ id: id, url: photoUrl_(id) })),
+    group: String(r[COL.GROUP - 1] || '').trim(),
   };
 }
 
@@ -537,16 +596,23 @@ function getProductsSheet_() {
     sh.getRange('J2:J').setWrap(true);
     sh.getRange('L2:L').setWrap(true);
     sh.getRange('K2:K').insertCheckboxes();
-    sh.getRange('A:M').setVerticalAlignment('middle');
-    [90, 125, 125, 100, 220, 150, 100, 100, 110, 280, 90, 220, 80].forEach((w, i) => sh.setColumnWidth(i + 1, w));
+    sh.getRange('A:N').setVerticalAlignment('middle');
+    [90, 125, 125, 100, 220, 150, 100, 100, 110, 280, 90, 220, 80, 110].forEach((w, i) => sh.setColumnWidth(i + 1, w));
     const rule = SpreadsheetApp.newDataValidation()
       .requireValueInRange(getCategoriesSheet_().getRange('A2:A'), true)
       .setAllowInvalid(true)
       .build();
     sh.getRange('F2:F').setDataValidation(rule);
     sh.hideColumns(COL.FILE_IDS);
-  } else if (sh.getRange(1, COL.UPDATED).getValue() !== HEADERS[COL.UPDATED - 1]) {
-    upgradeSheets_(sh);
+  } else {
+    const head = sh.getRange(1, 1, 1, Math.min(sh.getMaxColumns(), COL.GROUP)).getDisplayValues()[0];
+    if (head[COL.UPDATED - 1] !== HEADERS[COL.UPDATED - 1]) upgradeSheets_(sh);
+    if (head[COL.GROUP - 1] !== HEADERS[COL.GROUP - 1] && sh.getRange(1, COL.GROUP > sh.getMaxColumns() ? 1 : COL.GROUP).getDisplayValue() !== HEADERS[COL.GROUP - 1]) {
+      // колонка «Склейка» — в конце листа, существующие колонки и данные не сдвигаются
+      if (sh.getMaxColumns() < COL.GROUP) sh.insertColumnsAfter(sh.getMaxColumns(), COL.GROUP - sh.getMaxColumns());
+      styleHeader_(sh.getRange(1, COL.GROUP).setValue(HEADERS[COL.GROUP - 1]));
+      sh.setColumnWidth(COL.GROUP, 110);
+    }
   }
   return sh;
 }
